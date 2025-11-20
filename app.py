@@ -13,12 +13,33 @@ st.set_page_config(page_title="Valuación Pro Ultra", layout="wide", page_icon="
 # --- ESTILOS CSS (BIG FONTS & HIGH CONTRAST) ---
 st.markdown("""
     <style>
-    /* FUENTES GLOBALES AUMENTADAS */
-    html, body, [class*="css"] {
+    /* 1. FUENTES GLOBALES MASIVAS */
+    html, body, [class*="css"], p, div, span {
         font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        font-size: 20px; /* Base aumentada */
     }
     
-    /* TARJETAS MÉTRICAS (MUCHO MÁS GRANDES) */
+    /* 2. PESTAÑAS GIGANTES */
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] {
+        font-size: 24px !important; /* Letra Pestañas */
+        font-weight: 700 !important;
+        padding: 15px 30px !important;
+        background-color: #f0f2f6;
+        border-radius: 10px 10px 0 0;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #ffffff !important;
+        color: #2980b9 !important;
+        border-top: 4px solid #2980b9;
+    }
+
+    /* 3. TABLAS LEGIBLES */
+    .stTable { font-size: 22px !important; }
+    thead tr th { font-size: 24px !important; background-color: #ececec !important; }
+    tbody tr td { font-size: 22px !important; padding: 15px !important; }
+
+    /* 4. TARJETAS MÉTRICAS */
     .metric-card {
         background-color: #ffffff;
         border-radius: 15px;
@@ -28,73 +49,54 @@ st.markdown("""
         border: 1px solid #ececec;
         height: 100%;
     }
-    
     .metric-label { 
         font-size: 18px !important; 
-        color: #666; 
+        color: #555; 
         text-transform: uppercase; 
-        font-weight: 700;
+        font-weight: 800;
         letter-spacing: 1.2px;
         margin-bottom: 10px;
     }
-    
     .metric-value { 
-        font-size: 48px !important; 
+        font-size: 56px !important; /* NÚMEROS GIGANTES */
         font-weight: 900; 
         color: #2c3e50; 
         line-height: 1.1;
     }
+    .metric-sub { font-size: 22px !important; font-weight: 600; margin-top: 12px; }
     
-    .metric-sub { 
-        font-size: 20px !important; 
-        font-weight: 500; 
-        margin-top: 12px; 
-    }
-    
-    /* CAJA DE VEREDICTO */
+    /* 5. CAJA DE VEREDICTO */
     .verdict-box {
-        padding: 30px;
+        padding: 35px;
         border-radius: 20px;
         text-align: center;
         color: white;
-        margin-bottom: 35px;
+        margin-bottom: 40px;
         box-shadow: 0 10px 25px rgba(0,0,0,0.15);
     }
     .v-undervalued { background: linear-gradient(135deg, #00b894, #0984e3); }
     .v-fair { background: linear-gradient(135deg, #fdcb6e, #e17055); }
     .v-overvalued { background: linear-gradient(135deg, #ff7675, #d63031); }
     
-    .v-main { font-size: 52px; font-weight: 900; margin: 10px 0; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
-    .v-desc { font-size: 22px; font-weight: 500; opacity: 0.95; }
-    
-    /* PESTAÑAS Y TABLAS */
-    .stTabs [data-baseweb="tab"] {
-        font-size: 20px !important;
-        font-weight: 600;
-        padding: 15px 25px;
-    }
-    .stTable { font-size: 18px !important; }
-    div[data-testid="stMetricValue"] { font-size: 36px !important; }
+    .v-main { font-size: 60px; font-weight: 900; margin: 10px 0; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+    .v-desc { font-size: 26px; font-weight: 500; opacity: 0.95; }
     
     /* CLASES DE COLOR */
-    .pos { color: #00b894; } 
-    .neg { color: #d63031; }
+    .pos { color: #00b894; font-weight:bold; } 
+    .neg { color: #d63031; font-weight:bold; }
     .neu { color: #636e72; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. MOTORES DE DATOS (SCRAPING CORREGIDO) ---
+# --- 1. MOTORES DE DATOS (SCRAPING + CÁLCULO HÍBRIDO) ---
 
 @st.cache_data(ttl=3600)
 def get_finviz_growth_soup(ticker):
-    # Finviz usa tickers con guión en vez de punto (BRK-B)
     ticker_clean = ticker.replace('.', '-')
     url = f"https://finviz.com/quote.ashx?t={ticker_clean}"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    }
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     try:
-        response = requests.get(url, headers=headers, timeout=5)
+        response = requests.get(url, headers=headers, timeout=4)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             target = soup.find(string="EPS next 5Y")
@@ -105,67 +107,111 @@ def get_finviz_growth_soup(ticker):
     except: return None
     return None
 
+def calculate_internal_ratios(stock, years=5):
+    """
+    FALLBACK: Si StockAnalysis falla, calculamos los ratios 'in-house'
+    usando datos de Yahoo Finance.
+    """
+    try:
+        # Descargar historia
+        start = (datetime.now() - timedelta(days=years*365)).strftime('%Y-%m-%d')
+        hist = stock.history(start=start, interval="1mo")
+        financials = stock.financials.T
+        financials.index = pd.to_datetime(financials.index)
+        financials = financials.sort_index()
+        
+        if hist.empty or financials.empty: return {}
+
+        ratios = {'PER': [], 'Price/Sales': [], 'Price/Book': []}
+        
+        for date, row in hist.iterrows():
+            price = row['Close']
+            # Dato financiero más cercano anterior
+            past = financials[financials.index <= date]
+            if not past.empty:
+                latest = past.iloc[-1]
+                
+                # PER
+                eps = latest.get('Diluted EPS', latest.get('Basic EPS'))
+                if eps and eps > 0: ratios['PER'].append(price / eps)
+                
+                # Price/Sales (Total Revenue / Shares)
+                rev = latest.get('Total Revenue')
+                shares = latest.get('Basic Average Shares')
+                if rev and shares and shares > 0:
+                    rps = rev / shares
+                    if rps > 0: ratios['Price/Sales'].append(price / rps)
+                    
+                # Price/Book
+                # Yahoo a veces no da Book Value directo en financials, lo aproximamos
+                # BV = (Total Assets - Total Liab) / Shares
+                assets = latest.get('Total Assets')
+                liab = latest.get('Total Liabilities Net Minority Interest')
+                if assets and liab and shares:
+                    bv = (assets - liab) / shares
+                    if bv > 0: ratios['Price/Book'].append(price / bv)
+
+        # Medias
+        final_ratios = {}
+        if ratios['PER']: final_ratios['PER'] = np.mean(ratios['PER'])
+        if ratios['Price/Sales']: final_ratios['Price/Sales'] = np.mean(ratios['Price/Sales'])
+        if ratios['Price/Book']: final_ratios['Price/Book'] = np.mean(ratios['Price/Book'])
+        
+        # Marcamos como calculados
+        final_ratios['source'] = 'calculated'
+        return final_ratios
+    except:
+        return {}
+
 @st.cache_data(ttl=3600)
-def get_stockanalysis_ratios(ticker):
+def get_stockanalysis_ratios_robust(ticker):
     """
-    Scraper V2: Usa Session para mantener cookies y headers completos.
-    Maneja redirecciones y tickers especiales.
+    Intenta Scraping -> Si falla -> Calcula Internamente.
     """
-    # StockAnalysis usa guiones (BRK-B) y minúsculas
     ticker_clean = ticker.lower().replace('.', '-')
     url = f"https://stockanalysis.com/stocks/{ticker_clean}/financials/ratios/"
     
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://stockanalysis.com/',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'same-origin',
-    })
+    # Headers "reales"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Referer': 'https://www.google.com/',
+        'Upgrade-Insecure-Requests': '1'
+    }
     
     ratios_data = {}
+    scraping_success = False
+    
+    # INTENTO 1: SCRAPING DIRECTO
     try:
-        response = session.get(url, timeout=6)
+        response = requests.get(url, headers=headers, timeout=4)
         if response.status_code == 200:
-            # Usamos read_html con BeautifulSoup backend implícito
             dfs = pd.read_html(response.text)
             if dfs:
-                df = dfs[0] # La primera tabla suele ser la buena
-                
-                # Mapeo
-                metrics_map = {
-                    'PE Ratio': 'PER',
-                    'PS Ratio': 'Price/Sales',
-                    'PB Ratio': 'Price/Book',
-                    'EV / EBITDA': 'EV/EBITDA'
-                }
+                df = dfs[0]
+                metrics_map = {'PE Ratio': 'PER', 'PS Ratio': 'Price/Sales', 'PB Ratio': 'Price/Book', 'EV / EBITDA': 'EV/EBITDA'}
                 
                 for index, row in df.iterrows():
-                    # Convertimos a string por seguridad
                     metric_raw = str(row.iloc[0])
-                    
                     for key, clean_name in metrics_map.items():
                         if key in metric_raw:
                             values = []
-                            # Iteramos desde la columna 1 en adelante (los años)
                             for val in row.iloc[1:]:
-                                try:
-                                    # Limpiar basura
-                                    v_str = str(val).replace(',', '').replace('%', '')
-                                    v = float(v_str)
-                                    values.append(v)
-                                except:
-                                    pass
-                            
-                            if values:
-                                ratios_data[clean_name] = np.mean(values)
-    except Exception as e:
-        # print(f"Debug Error: {e}") # Descomentar solo para debug local
+                                try: values.append(float(str(val).replace(',', '').replace('%', '')))
+                                except: pass
+                            if values: ratios_data[clean_name] = np.mean(values)
+                
+                if ratios_data:
+                    ratios_data['source'] = 'scraped'
+                    scraping_success = True
+    except:
         pass
+    
+    # INTENTO 2: CÁLCULO INTERNO (SI FALLA SCRAPING)
+    if not scraping_success:
+        stock = yf.Ticker(ticker)
+        internal_data = calculate_internal_ratios(stock)
+        ratios_data.update(internal_data) # Mezclamos
         
     return ratios_data
 
@@ -179,50 +225,19 @@ def get_full_analysis(ticker, years_hist=10):
     # Dividendos
     div_rate = info.get('dividendRate', 0)
     current_yield = (div_rate / price) if (div_rate and price > 0) else 0
-    
-    # Fallback yield
     if current_yield == 0:
         raw_y = info.get('dividendYield', 0)
-        if raw_y and raw_y > 0.5: current_yield = raw_y / 100
-        else: current_yield = raw_y or 0
+        current_yield = raw_y / 100 if (raw_y and raw_y > 0.5) else (raw_y or 0)
 
     raw_avg = info.get('fiveYearAvgDividendYield', 0)
     avg_5y_yield = raw_avg / 100 if raw_avg is not None else 0
         
-    # PER Histórico
-    pe_mean = 15.0
-    try:
-        start_date = (datetime.now() - timedelta(days=years_hist*365 + 180)).strftime('%Y-%m-%d')
-        hist = stock.history(start=start_date, interval="1mo")
-        if not hist.empty:
-            if hist.index.tz is not None: hist.index = hist.index.tz_localize(None)
-            financials = stock.financials.T
-            financials.index = pd.to_datetime(financials.index)
-            if financials.index.tz is not None: financials.index = financials.index.tz_localize(None)
-            financials = financials.sort_index()
-            
-            pe_values = []
-            for date, row in hist.iterrows():
-                past = financials[financials.index <= date]
-                if not past.empty:
-                    latest = past.iloc[-1]
-                    eps_val = np.nan
-                    for k in ['Diluted EPS', 'Basic EPS', 'DilutedEPS']:
-                        if k in latest and pd.notna(latest[k]):
-                            eps_val = latest[k]; break
-                    if pd.isna(eps_val):
-                        try:
-                            if latest.get('Net Income Common Stockholders') and latest.get('Basic Average Shares'):
-                                eps_val = latest.get('Net Income Common Stockholders') / latest.get('Basic Average Shares')
-                        except: pass
-                    if eps_val and eps_val > 0:
-                        pe = row['Close'] / eps_val
-                        if 5 < pe < 200: pe_values.append(pe)
-            if pe_values: pe_mean = np.mean(pe_values)
-    except: pass 
-
-    ext_ratios = get_stockanalysis_ratios(ticker)
+    # Datos Externos (Híbrido)
+    ext_ratios = get_stockanalysis_ratios_robust(ticker)
     finviz_growth = get_finviz_growth_soup(ticker)
+    
+    # PER Histórico: Priorizamos el scrapeado, si no, el calculado
+    pe_mean = ext_ratios.get('PER', 15.0)
 
     return {
         'info': info, 'price': price, 'pe_mean': pe_mean,
@@ -244,16 +259,15 @@ def card_html(label, value, sub_value=None, color_class="neu"):
 
 def verdict_box(price, fair_value):
     margin = ((fair_value - price) / price) * 100
-    
     if margin > 15:
         css = "v-undervalued"; title = "💎 OPORTUNIDAD"; main = "INFRAVALORADA"; icon = "🚀"
-        desc = f"Descuento del {margin:.1f}% vs Histórico"
+        desc = f"Descuento del {margin:.1f}%"
     elif margin < -15:
         css = "v-overvalued"; title = "⚠️ CUIDADO"; main = "SOBREVALORADA"; icon = "🛑"
-        desc = f"Prima del {abs(margin):.1f}% vs Histórico"
+        desc = f"Prima del {abs(margin):.1f}%"
     else:
         css = "v-fair"; title = "⚖️ EQUILIBRIO"; main = "PRECIO JUSTO"; icon = "✅"
-        desc = f"Cotizando cerca de su media histórica"
+        desc = f"Cotizando cerca de su media"
 
     st.markdown(f"""
     <div class="verdict-box {css}">
@@ -269,12 +283,11 @@ with st.sidebar:
     st.header("🎛️ Configuración")
     ticker = st.text_input("Ticker", value="GOOGL").upper()
     st.divider()
-    years_hist = st.slider("Años Media Histórica", 5, 10, 10)
-    st.caption("v3.5 Big Font Edition")
+    st.caption("v4.0 Big UI & Hybrid Data")
 
 if ticker:
-    with st.spinner(f'⏳ Conectando con StockAnalysis & Finviz para {ticker}...'):
-        data = get_full_analysis(ticker, years_hist)
+    with st.spinner(f'⏳ Analizando {ticker}...'):
+        data = get_full_analysis(ticker)
     
     if not data:
         st.error("Ticker no encontrado.")
@@ -287,20 +300,25 @@ if ticker:
     ext_ratios = data['ext_ratios']
     finviz_g = data['finviz_growth']
     
-    # Crecimiento
+    # Configuración de Crecimiento
     default_g = finviz_g if finviz_g else 10.0
     with st.sidebar:
         st.subheader("⚙️ Proyección")
         growth_input = st.number_input("Crecimiento (5y) %", value=float(default_g), step=0.5)
         if finviz_g: st.success(f"✅ Finviz: {finviz_g}%")
-        else: st.warning("⚠️ Manual (Finviz N/A)")
-        if ext_ratios: st.success(f"✅ StockAnalysis: Conectado")
-        else: st.warning("⚠️ StockAnalysis: Fallo conexión")
+        
+        # Indicador de Origen de Datos
+        if ext_ratios.get('source') == 'scraped':
+            st.success("✅ StockAnalysis: Conectado")
+        elif ext_ratios.get('source') == 'calculated':
+            st.info("ℹ️ StockAnalysis: Calculado (Fallback)")
+        else:
+            st.warning("⚠️ Datos Históricos Limitados")
 
     eps = info.get('trailingEps', 0)
     fair_value = eps * pe_mean
     
-    # Header
+    # --- HEADER ---
     st.title(f"{info.get('shortName', ticker)}")
     st.markdown(f"### **{info.get('sector', '')}**  •  {info.get('industry', '')}")
     st.markdown("---")
@@ -327,64 +345,94 @@ if ticker:
         sub = f"Media: {v_a*100:.2f}%" if v_a > 0 else "N/A"
         card_html("Div. Yield", f"{v_c*100:.2f}%", sub, col)
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<br><br>", unsafe_allow_html=True)
 
-    # 3. TABS
+    # 3. PESTAÑAS GIGANTES
     t1, t2, t3 = st.tabs(["🚀 PROYECCIÓN 2029", "💰 DIVIDENDOS", "📊 FUNDAMENTALES VS MEDIA"])
     
+    # TAB 1: PROYECCIÓN
     with t1:
+        st.markdown("<br>", unsafe_allow_html=True)
         cc1, cc2 = st.columns([1, 2])
         with cc1:
-            st.subheader("Calculadora")
-            st.markdown(f"<div style='font-size:20px'>EPS: <b>${eps:.2f}</b> | Crecimiento: <b>{growth_input}%</b></div>", unsafe_allow_html=True)
-            st.write("")
+            st.subheader("📝 Calculadora")
+            st.markdown(f"""
+            <ul style='font-size:22px'>
+                <li>EPS Actual: <b>${eps:.2f}</b></li>
+                <li>Crecimiento Estimado: <b>{growth_input}%</b></li>
+                <li>PER Medio Histórico: <b>{pe_mean:.1f}x</b></li>
+            </ul>
+            """, unsafe_allow_html=True)
+            
             exit_pe = st.number_input("PER de Salida Estimado", value=float(round(pe_mean, 1)))
+            
             f_eps = eps * ((1 + growth_input/100)**5)
             f_price = f_eps * exit_pe
             cagr = ((f_price/price)**(1/5)-1)*100
+            
             st.markdown("---")
-            st.markdown(f"<div style='font-size:24px'>Precio 2029: <b>${f_price:.2f}</b></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-size:28px; margin-bottom:10px'>Precio 2029: <b>${f_price:.2f}</b></div>", unsafe_allow_html=True)
             c_col = "#00b894" if cagr > 10 else "#2d3436"
-            st.markdown(f"<div style='font-size:24px'>CAGR: <b style='color:{c_col}; font-size:36px'>{cagr:.2f}%</b></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-size:28px'>CAGR Esperado: <b style='color:{c_col}; font-size:42px'>{cagr:.2f}%</b></div>", unsafe_allow_html=True)
+            
         with cc2:
             yrs = list(range(datetime.now().year, datetime.now().year+6))
             vals = [price * ((1 + cagr/100)**i) for i in range(6)]
-            fig = go.Figure(go.Scatter(x=yrs, y=vals, mode='lines+markers', line=dict(color='#0984e3', width=5), marker=dict(size=12)))
-            fig.update_layout(title="Curva de Valor", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(size=14))
+            fig = go.Figure(go.Scatter(x=yrs, y=vals, mode='lines+markers', line=dict(color='#0984e3', width=5), marker=dict(size=14)))
+            fig.update_layout(
+                title={'text': "Curva de Valor Teórico", 'font': {'size': 24}},
+                font=dict(size=18),
+                height=400
+            )
             st.plotly_chart(fig, use_container_width=True)
 
+    # TAB 2: DIVIDENDOS
     with t2:
+        st.markdown("<br>", unsafe_allow_html=True)
         if divs['rate'] and divs['avg_5y'] > 0:
             fair_yld = divs['rate'] / divs['avg_5y']
             marg = ((fair_yld - price)/price)*100
+            
             cd1, cd2 = st.columns(2)
             with cd1:
-                st.markdown(f"<div style='font-size:22px'>Dividendo Anual: <b>${divs['rate']}</b></div>", unsafe_allow_html=True)
-                st.markdown(f"<div style='font-size:22px'>Media Histórica: <b>{divs['avg_5y']*100:.2f}%</b></div>", unsafe_allow_html=True)
-                st.markdown("---")
-                st.metric("Valor Justo (Weiss)", f"${fair_yld:.2f}", f"{marg:+.1f}%")
+                st.info("ℹ️ Modelo de Geraldine Weiss (Yield Theory)")
+                st.markdown(f"""
+                <div style='font-size:24px; line-height:2'>
+                    💰 Dividendo Anual: <b>${divs['rate']}</b><br>
+                    📉 Media Histórica: <b>{divs['avg_5y']*100:.2f}%</b><br>
+                    🏁 Valor Justo: <b style='color:#2980b9'>${fair_yld:.2f}</b>
+                </div>
+                """, unsafe_allow_html=True)
+                
             with cd2:
-                fig = go.Figure(go.Bar(x=['Actual', 'Media'], y=[divs['current']*100, divs['avg_5y']*100], marker_color=['#00b894','#b2bec3'], texttemplate='%{y:.2f}%'))
-                fig.update_layout(title="Rentabilidad (%)", font=dict(size=16))
+                fig = go.Figure(go.Bar(x=['Actual', 'Media'], y=[divs['current']*100, divs['avg_5y']*100], marker_color=['#00b894','#b2bec3'], texttemplate='%{y:.2f}%', textfont={'size': 20}))
+                fig.update_layout(title={'text': "Rentabilidad Comparada", 'font': {'size': 24}}, font=dict(size=18), height=350)
                 st.plotly_chart(fig, use_container_width=True)
-        else: st.info("Datos de dividendos insuficientes.")
+        else:
+            st.warning("Empresa sin historial de dividendos suficiente.")
 
+    # TAB 3: RATIOS (TABLA GRANDE)
     with t3:
-        st.subheader("Análisis de Ratios Históricos")
-        ratios = {
-            'PER (P/E)': {'curr': info.get('trailingPE'), 'avg': ext_ratios.get('PER') or pe_mean},
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.subheader("🔎 Salud Financiera vs Histórico")
+        
+        ratios_to_show = {
+            'PER (P/E)': {'curr': info.get('trailingPE'), 'avg': ext_ratios.get('PER')},
             'Price/Sales': {'curr': info.get('priceToSalesTrailing12Months'), 'avg': ext_ratios.get('Price/Sales')},
             'Price/Book': {'curr': info.get('priceToBook'), 'avg': ext_ratios.get('Price/Book')},
             'EV/EBITDA': {'curr': info.get('enterpriseToEbitda'), 'avg': ext_ratios.get('EV/EBITDA')}
         }
-        rows = []
-        for n, v in ratios.items():
-            c, a = v['curr'], v['avg']
-            if c and a:
-                stat = "🟢 Barato" if c < a else "🔴 Caro"
-                diff = ((c-a)/a)*100
-                rows.append([n, f"{c:.2f}", f"{a:.2f}", f"{diff:+.1f}%", stat])
-            elif c: rows.append([n, f"{c:.2f}", "N/A", "-", "-"])
         
-        st.table(pd.DataFrame(rows, columns=['Ratio', 'Actual', 'Media 5y', 'Desv.', 'Estado']))
-        if not ext_ratios: st.warning("⚠️ Medias calculadas con datos parciales (StockAnalysis Bloqueado)")
+        rows = []
+        for name, vals in ratios_to_show.items():
+            curr = vals['curr']
+            avg = vals['avg']
+            if curr and avg:
+                status = "🟢 Barato" if curr < avg else "🔴 Caro"
+                diff = ((curr-avg)/avg)*100
+                rows.append([name, f"{curr:.2f}", f"{avg:.2f}", f"{diff:+.1f}%", status])
+            elif curr:
+                rows.append([name, f"{curr:.2f}", "N/A", "-", "-"])
+        
+        df_ratios = pd.DataFrame(rows, columns=['Ratio', 'Actual', 'Media Histórica', 'Desviación', 'Diagnóstico'])
+        st.table(df_ratios)
