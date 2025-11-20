@@ -8,240 +8,200 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Valuación Pro Ultra", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Valuación Master", layout="wide", page_icon="💎")
 
-# --- ESTILOS CSS (BIG FONTS & HIGH CONTRAST) ---
+# --- ESTILOS CSS (BIG FONTS) ---
 st.markdown("""
     <style>
-    /* 1. FUENTES GLOBALES MASIVAS */
-    html, body, [class*="css"], p, div, span {
-        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-        font-size: 20px; 
+    /* FUENTES GLOBALES */
+    html, body, [class*="css"], div, span, p {
+        font-family: 'Arial', sans-serif;
+        font-size: 20px;
     }
     
-    /* 2. PESTAÑAS GIGANTES */
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] {
-        font-size: 24px !important; 
-        font-weight: 700 !important;
-        padding: 15px 30px !important;
-        background-color: #f0f2f6;
-        border-radius: 10px 10px 0 0;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #ffffff !important;
-        color: #2980b9 !important;
-        border-top: 4px solid #2980b9;
-    }
-
-    /* 3. TABLAS LEGIBLES */
-    .stTable { font-size: 22px !important; }
-    thead tr th { font-size: 24px !important; background-color: #ececec !important; }
-    tbody tr td { font-size: 22px !important; padding: 15px !important; }
-
-    /* 4. TARJETAS MÉTRICAS */
+    /* TARJETAS MÉTRICAS */
     .metric-card {
         background-color: #ffffff;
         border-radius: 15px;
-        padding: 25px 15px;
+        padding: 30px 15px;
         text-align: center;
-        box-shadow: 0 6px 15px rgba(0,0,0,0.08);
-        border: 1px solid #ececec;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        border: 1px solid #e0e0e0;
         height: 100%;
     }
     .metric-label { 
         font-size: 18px !important; 
-        color: #555; 
+        color: #666; 
         text-transform: uppercase; 
         font-weight: 800;
-        letter-spacing: 1.2px;
-        margin-bottom: 10px;
+        margin-bottom: 15px;
     }
     .metric-value { 
-        font-size: 56px !important; 
+        font-size: 52px !important; 
         font-weight: 900; 
         color: #2c3e50; 
-        line-height: 1.1;
+        line-height: 1;
     }
-    .metric-sub { font-size: 22px !important; font-weight: 600; margin-top: 12px; }
-    
-    /* 5. CAJA DE VEREDICTO */
+    .metric-sub { font-size: 22px !important; font-weight: 600; margin-top: 15px; }
+
+    /* VEREDICTO */
     .verdict-box {
-        padding: 35px;
+        padding: 40px;
         border-radius: 20px;
         text-align: center;
         color: white;
         margin-bottom: 40px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+        box-shadow: 0 10px 20px rgba(0,0,0,0.15);
     }
     .v-undervalued { background: linear-gradient(135deg, #00b894, #0984e3); }
-    .v-fair { background: linear-gradient(135deg, #fdcb6e, #e17055); }
-    .v-overvalued { background: linear-gradient(135deg, #ff7675, #d63031); }
-    
-    .v-main { font-size: 60px; font-weight: 900; margin: 10px 0; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
-    .v-desc { font-size: 26px; font-weight: 500; opacity: 0.95; }
-    
-    /* CLASES DE COLOR */
-    .pos { color: #00b894; font-weight:bold; } 
-    .neg { color: #d63031; font-weight:bold; }
-    .neu { color: #636e72; }
+    .v-fair { background: linear-gradient(135deg, #f1c40f, #e67e22); }
+    .v-overvalued { background: linear-gradient(135deg, #e74c3c, #c0392b); }
+    .v-main { font-size: 64px; font-weight: 900; margin: 15px 0; text-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+    .v-desc { font-size: 28px; font-weight: 500; }
+
+    /* TABLAS GIGANTES */
+    .stTable { font-size: 22px !important; }
+    thead tr th { font-size: 24px !important; background-color: #f8f9fa !important; padding: 20px !important;}
+    tbody tr td { font-size: 22px !important; padding: 20px !important; }
+
+    /* PESTAÑAS */
+    .stTabs [data-baseweb="tab"] {
+        font-size: 26px !important;
+        padding: 15px 30px !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. MOTORES DE DATOS (ROBUSTEZ EXTREMA) ---
+# --- 1. MOTORES DE CÁLCULO ROBUSTO ---
 
 @st.cache_data(ttl=3600)
-def get_finviz_growth_soup(ticker):
-    ticker_clean = ticker.replace('.', '-')
-    url = f"https://finviz.com/quote.ashx?t={ticker_clean}"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+def get_finviz_growth(ticker):
+    """Scraping simple de Finviz."""
+    ticker = ticker.replace('.', '-')
+    url = f"https://finviz.com/quote.ashx?t={ticker}"
+    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
-        response = requests.get(url, headers=headers, timeout=4)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            target = soup.find(string="EPS next 5Y")
-            if target:
-                val_td = target.parent.find_next_sibling('td')
-                if val_td and val_td.text:
-                    return float(val_td.text.replace('%', '').strip())
+        r = requests.get(url, headers=headers, timeout=3)
+        soup = BeautifulSoup(r.content, 'html.parser')
+        t = soup.find(string="EPS next 5Y")
+        if t:
+            val = t.parent.find_next_sibling('td').text.replace('%', '').strip()
+            return float(val)
     except: return None
     return None
 
-def calculate_internal_ratios_v2(stock, years=5):
+@st.cache_data(ttl=3600)
+def calculate_robust_ratios(ticker, years=5):
     """
-    Cálculo matemático robusto usando datos trimestrales y anuales de Yahoo.
-    Diseñado para no fallar nunca si Yahoo tiene datos mínimos.
+    MÉTODO MATEMÁTICO INFALIBLE:
+    Descarga precios y fundamentales, los alinea y calcula la media.
+    Ignora el scraping externo para asegurar que siempre haya datos.
     """
+    stock = yf.Ticker(ticker)
+    
+    # 1. Historial de Precios (Mensual)
+    start_date = (datetime.now() - timedelta(days=years*365 + 30)).strftime('%Y-%m-%d')
+    hist = stock.history(start=start_date, interval="1mo")
+    
+    if hist.empty: return {}
+    
+    # Limpieza de zona horaria
+    if hist.index.tz is not None: hist.index = hist.index.tz_localize(None)
+    
+    # 2. Fundamentales Anuales (Más estables que trimestrales)
+    fin = stock.financials.T
+    bal = stock.balance_sheet.T
+    
+    if fin.empty: return {}
+    
+    # Limpieza de índices
+    fin.index = pd.to_datetime(fin.index)
+    if bal is not None and not bal.empty:
+        bal.index = pd.to_datetime(bal.index)
+    
+    if fin.index.tz is not None: fin.index = fin.index.tz_localize(None)
+    
+    # 3. Fusión de Datos (Resampling)
+    # Creamos un DataFrame base con los precios mensuales
+    df_merge = pd.DataFrame(index=hist.index)
+    df_merge['Price'] = hist['Close']
+    
+    # Unimos los fundamentales por fecha más cercana anterior (asof)
+    # Para hacerlo fácil en Pandas: Concatenamos y hacemos ffill()
+    
+    # Extraemos métricas clave de Financials
+    metrics_fin = pd.DataFrame(index=fin.index)
+    
+    # EPS
+    metrics_fin['EPS'] = fin.get('Diluted EPS', fin.get('Basic EPS'))
+    # Ventas por Acción
+    rev = fin.get('Total Revenue')
+    shares = fin.get('Basic Average Shares', fin.get('Share Issued'))
+    if rev is not None and shares is not None:
+        metrics_fin['RPS'] = rev / shares # Revenue Per Share
+    
+    # Unimos Balance si existe
+    if not bal.empty:
+        if bal.index.tz is not None: bal.index = bal.index.tz_localize(None)
+        # Valor en Libros
+        assets = bal.get('Total Assets')
+        liab = bal.get('Total Liabilities Net Minority Interest')
+        # Buscamos shares de financial correspondiente o del mismo balance
+        if assets is not None and liab is not None and shares is not None:
+            # Alineamos shares con balance por índice si es posible, si no usamos el de fin
+            # Simplificación: Usamos el Book Value directo si existe, o calculamos
+            metrics_fin['BVPS'] = (assets - liab) / shares
+            
+            # EV/EBITDA Componentes
+            debt = bal.get('Total Debt')
+            cash = bal.get('Cash And Cash Equivalents')
+            ebitda = fin.get('EBITDA', fin.get('Normalized EBITDA'))
+            
+            if debt is not None and cash is not None and ebitda is not None:
+                metrics_fin['Debt'] = debt
+                metrics_fin['Cash'] = cash
+                metrics_fin['EBITDA'] = ebitda
+                metrics_fin['Shares'] = shares
+
+    # Ordenar y mezclar
+    metrics_fin = metrics_fin.sort_index()
+    
+    # Unir precios con fundamentales usando "asof" (el reporte válido en esa fecha)
+    # Pandas merge_asof requiere orden ascendente
+    df_merge = df_merge.sort_index()
+    
+    # Reindexamos fundamentales a las fechas de los precios usando ffill (el dato se mantiene hasta el siguiente reporte)
+    df_final = df_merge.join(metrics_fin, how='outer').ffill().dropna(subset=['Price'])
+    
+    # 4. Cálculo de Ratios Históricos
     ratios = {'PER': [], 'Price/Sales': [], 'Price/Book': [], 'EV/EBITDA': []}
     
-    try:
-        # 1. Descargar Historial de Precios
-        start = (datetime.now() - timedelta(days=years*365)).strftime('%Y-%m-%d')
-        hist = stock.history(start=start, interval="1d") # Diario para precisión
-        if hist.empty: return {}
-        
-        # 2. Obtener Datos Financieros (Trimestrales para más puntos de datos)
-        # Combinamos Balance y Resultados
-        fin = stock.quarterly_financials.T
-        bal = stock.quarterly_balance_sheet.T
-        
-        # Si trimestrales fallan, usar anuales
-        if fin.empty: fin = stock.financials.T
-        if bal.empty: bal = stock.balance_sheet.T
-        
-        # Convertir índices a fecha
-        fin.index = pd.to_datetime(fin.index)
-        bal.index = pd.to_datetime(bal.index)
-        
-        # Procesar cada reporte disponible
-        for date in fin.index:
-            try:
-                # Encontrar precio cercano a la fecha del reporte (bfill/ffill)
-                # Usamos un margen de 5 días por si cae en finde
-                idx = hist.index.get_indexer([date], method='nearest')
-                if idx[0] == -1: continue
-                
-                price = hist.iloc[idx[0]]['Close']
-                
-                # Datos del reporte
-                report = fin.loc[date]
-                
-                # --- PER (Price / EPS) ---
-                eps = report.get('Diluted EPS', report.get('Basic EPS'))
-                if eps and eps > 0: ratios['PER'].append(price / eps)
-                
-                # --- P/S (Price / Sales per Share) ---
-                rev = report.get('Total Revenue', report.get('Total Revenue'))
-                shares = report.get('Basic Average Shares', report.get('Share Issued'))
-                if rev and shares and shares > 0:
-                    rps = rev / shares
-                    if rps > 0: ratios['Price/Sales'].append(price / rps)
-                
-                # --- P/B (Price / Book Value per Share) ---
-                # Necesitamos datos del balance para la misma fecha (aprox)
-                if not bal.empty:
-                    # Buscar balance cercano
-                    bal_idx = bal.index.get_indexer([date], method='nearest')
-                    if bal_idx[0] != -1:
-                        bal_report = bal.iloc[bal_idx[0]]
-                        assets = bal_report.get('Total Assets')
-                        liab = bal_report.get('Total Liabilities Net Minority Interest')
-                        
-                        if assets and liab and shares:
-                            bvps = (assets - liab) / shares
-                            if bvps > 0: ratios['Price/Book'].append(price / bvps)
-                            
-                            # --- EV / EBITDA (Aproximación) ---
-                            ebitda = report.get('EBITDA', report.get('Normalized EBITDA'))
-                            cash = bal_report.get('Cash And Cash Equivalents')
-                            debt = bal_report.get('Total Debt')
-                            
-                            if ebitda and ebitda > 0 and cash is not None and debt is not None:
-                                market_cap = price * shares
-                                ev = market_cap + debt - cash
-                                ratios['EV/EBITDA'].append(ev / ebitda)
-                                
-            except Exception as e:
-                continue # Si falla un trimestre, seguimos al siguiente
+    # Vectorizado (Mucho más rápido y seguro)
+    if 'EPS' in df_final.columns:
+        df_final['PE_Ratio'] = df_final['Price'] / df_final['EPS']
+        # Filtrar anomalías
+        valid_pe = df_final['PE_Ratio'][(df_final['PE_Ratio'] > 0) & (df_final['PE_Ratio'] < 200)]
+        if not valid_pe.empty: ratios['PER'] = valid_pe.mean()
 
-        # Calcular Medias Finales
-        final_ratios = {}
-        if ratios['PER']: final_ratios['PER'] = np.mean(ratios['PER'])
-        if ratios['Price/Sales']: final_ratios['Price/Sales'] = np.mean(ratios['Price/Sales'])
-        if ratios['Price/Book']: final_ratios['Price/Book'] = np.mean(ratios['Price/Book'])
-        if ratios['EV/EBITDA']: final_ratios['EV/EBITDA'] = np.mean(ratios['EV/EBITDA'])
-        
-        final_ratios['source'] = 'calculated'
-        return final_ratios
+    if 'RPS' in df_final.columns:
+        df_final['PS_Ratio'] = df_final['Price'] / df_final['RPS']
+        valid_ps = df_final['PS_Ratio'][(df_final['PS_Ratio'] > 0) & (df_final['PS_Ratio'] < 50)]
+        if not valid_ps.empty: ratios['Price/Sales'] = valid_ps.mean()
 
-    except Exception as e:
-        return {}
+    if 'BVPS' in df_final.columns:
+        df_final['PB_Ratio'] = df_final['Price'] / df_final['BVPS']
+        valid_pb = df_final['PB_Ratio'][(df_final['PB_Ratio'] > 0) & (df_final['PB_Ratio'] < 50)]
+        if not valid_pb.empty: ratios['Price/Book'] = valid_pb.mean()
 
-@st.cache_data(ttl=3600)
-def get_stockanalysis_ratios_robust(ticker):
-    ticker_clean = ticker.lower().replace('.', '-')
-    url = f"https://stockanalysis.com/stocks/{ticker_clean}/financials/ratios/"
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-    }
-    
-    ratios_data = {}
-    scraping_success = False
-    
-    # 1. Intentar Scraping
-    try:
-        response = requests.get(url, headers=headers, timeout=3)
-        if response.status_code == 200:
-            dfs = pd.read_html(response.text)
-            if dfs:
-                df = dfs[0]
-                metrics_map = {'PE Ratio': 'PER', 'PS Ratio': 'Price/Sales', 'PB Ratio': 'Price/Book', 'EV / EBITDA': 'EV/EBITDA'}
-                for index, row in df.iterrows():
-                    metric_raw = str(row.iloc[0])
-                    for key, clean_name in metrics_map.items():
-                        if key in metric_raw:
-                            values = []
-                            for val in row.iloc[1:]:
-                                try: values.append(float(str(val).replace(',', '').replace('%', '')))
-                                except: pass
-                            if values: ratios_data[clean_name] = np.mean(values)
-                if ratios_data: 
-                    ratios_data['source'] = 'scraped'
-                    scraping_success = True
-    except: pass
-    
-    # 2. Fallback Cálculo Interno (Si falló el scraping o faltan datos)
-    if not scraping_success or len(ratios_data) < 2:
-        stock = yf.Ticker(ticker)
-        internal_data = calculate_internal_ratios_v2(stock)
-        # Mezclamos: Priorizamos el scraping, rellenamos con interno
-        for k, v in internal_data.items():
-            if k not in ratios_data:
-                ratios_data[k] = v
-        if 'source' not in ratios_data: ratios_data['source'] = 'calculated'
+    if 'EBITDA' in df_final.columns and 'Debt' in df_final.columns:
+        # EV = MarketCap + Debt - Cash
+        # MarketCap = Price * Shares
+        df_final['EV'] = (df_final['Price'] * df_final['Shares']) + df_final['Debt'] - df_final['Cash']
+        df_final['EV_EBITDA'] = df_final['EV'] / df_final['EBITDA']
+        valid_ev = df_final['EV_EBITDA'][(df_final['EV_EBITDA'] > 0) & (df_final['EV_EBITDA'] < 100)]
+        if not valid_ev.empty: ratios['EV/EBITDA'] = valid_ev.mean()
         
-    return ratios_data
+    return ratios
 
 @st.cache_data(ttl=3600)
 def get_full_analysis(ticker, years_hist=10):
@@ -250,25 +210,33 @@ def get_full_analysis(ticker, years_hist=10):
     price = info.get('currentPrice', info.get('regularMarketPreviousClose'))
     if not price: return None
     
+    # Dividendos
     div_rate = info.get('dividendRate', 0)
     current_yield = (div_rate / price) if (div_rate and price > 0) else 0
     if current_yield == 0:
         raw_y = info.get('dividendYield', 0)
         current_yield = raw_y / 100 if (raw_y and raw_y > 0.5) else (raw_y or 0)
-
+    
     raw_avg = info.get('fiveYearAvgDividendYield', 0)
     avg_5y_yield = raw_avg / 100 if raw_avg is not None else 0
-        
-    ext_ratios = get_stockanalysis_ratios_robust(ticker)
-    finviz_growth = get_finviz_growth_soup(ticker)
     
-    # PER Histórico: Usamos el que tengamos (Scraped o Calculated)
-    pe_mean = ext_ratios.get('PER', 15.0)
+    # HISTÓRICOS (CÁLCULO INTERNO SEGURO)
+    hist_ratios = calculate_robust_ratios(ticker, years_hist)
+    
+    # Crecimiento
+    finviz_g = get_finviz_growth(ticker)
+    
+    # PER Medio para Valuation
+    # Si el cálculo falló, usamos 15 como fallback de seguridad
+    pe_mean = hist_ratios.get('PER', 15.0)
+    
+    # Asegurar que no es numpy.nan
+    if pd.isna(pe_mean): pe_mean = 15.0
 
     return {
         'info': info, 'price': price, 'pe_mean': pe_mean,
         'div_data': {'current': current_yield, 'avg_5y': avg_5y_yield, 'rate': div_rate},
-        'ext_ratios': ext_ratios, 'finviz_growth': finviz_growth
+        'hist_ratios': hist_ratios, 'finviz_growth': finviz_growth
     }
 
 # --- 2. COMPONENTES VISUALES ---
@@ -293,7 +261,7 @@ def verdict_box(price, fair_value):
         desc = f"Prima del {abs(margin):.1f}%"
     else:
         css = "v-fair"; title = "⚖️ EQUILIBRIO"; main = "PRECIO JUSTO"; icon = "✅"
-        desc = f"En línea con su media histórica"
+        desc = f"Cotizando cerca de su valor"
 
     st.markdown(f"""
     <div class="verdict-box {css}">
@@ -303,28 +271,27 @@ def verdict_box(price, fair_value):
     </div>
     """, unsafe_allow_html=True)
 
-# --- 3. MAIN ---
+# --- 3. MAIN APP ---
 
 with st.sidebar:
     st.header("🎛️ Configuración")
     ticker = st.text_input("Ticker", value="GOOGL").upper()
     st.divider()
     years_hist = st.slider("Años Media Histórica", 5, 10, 10)
-    st.caption("v5.0 Robust Engine")
 
 if ticker:
-    with st.spinner(f'⏳ Ejecutando análisis profundo para {ticker}...'):
-        data = get_full_analysis(ticker)
+    with st.spinner(f'⚙️ Procesando datos financieros para {ticker}...'):
+        data = get_full_analysis(ticker, years_hist)
     
     if not data:
-        st.error("Ticker no encontrado.")
+        st.error("Error: No se pudo obtener información del Ticker.")
         st.stop()
         
     info = data['info']
     price = data['price']
     pe_mean = data['pe_mean']
     divs = data['div_data']
-    ext_ratios = data['ext_ratios']
+    hist_ratios = data['hist_ratios']
     finviz_g = data['finviz_growth']
     
     # Crecimiento
@@ -333,12 +300,7 @@ if ticker:
         st.subheader("⚙️ Proyección")
         growth_input = st.number_input("Crecimiento (5y) %", value=float(default_g), step=0.5)
         if finviz_g: st.success(f"✅ Finviz: {finviz_g}%")
-        
-        # Debug Source
-        src = ext_ratios.get('source', 'unknown')
-        if src == 'scraped': st.success("✅ StockAnalysis: Web")
-        elif src == 'calculated': st.info("⚡ StockAnalysis: Matemático")
-        else: st.warning("⚠️ Datos limitados")
+        else: st.info("ℹ️ Estimación Manual")
 
     eps = info.get('trailingEps', 0)
     fair_value = eps * pe_mean
@@ -372,22 +334,24 @@ if ticker:
 
     st.markdown("<br><br>", unsafe_allow_html=True)
 
-    # 3. TABS GIGANTES
+    # 3. PESTAÑAS GIGANTES
     t1, t2, t3 = st.tabs(["🚀 PROYECCIÓN 2029", "💰 DIVIDENDOS", "📊 FUNDAMENTALES VS MEDIA"])
     
+    # TAB 1: PROYECCIÓN
     with t1:
         st.markdown("<br>", unsafe_allow_html=True)
         cc1, cc2 = st.columns([1, 2])
         with cc1:
             st.subheader("📝 Calculadora")
             st.markdown(f"""
-            <ul style='font-size:22px; line-height:1.8'>
-                <li>EPS Actual: <b>${eps:.2f}</b></li>
-                <li>Crecimiento Estimado: <b>{growth_input}%</b></li>
-                <li>PER Salida (Est): <b>{pe_mean:.1f}x</b></li>
-            </ul>
+            <div style='background-color:#f8f9fa; padding:20px; border-radius:10px; border:1px solid #ddd;'>
+                <p>EPS Actual: <b>${eps:.2f}</b></p>
+                <p>Crecimiento Estimado: <b>{growth_input}%</b></p>
+                <p>PER Salida Estimado: <b>{pe_mean:.1f}x</b></p>
+            </div>
             """, unsafe_allow_html=True)
             
+            st.write("")
             exit_pe = st.number_input("Ajustar PER Salida", value=float(round(pe_mean, 1)))
             
             f_eps = eps * ((1 + growth_input/100)**5)
@@ -395,21 +359,22 @@ if ticker:
             cagr = ((f_price/price)**(1/5)-1)*100
             
             st.markdown("---")
-            st.markdown(f"<div style='font-size:28px; margin-bottom:10px'>Precio 2029: <b>${f_price:.2f}</b></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-size:32px; margin-bottom:10px'>Precio 2029: <b>${f_price:.2f}</b></div>", unsafe_allow_html=True)
             c_col = "#00b894" if cagr > 10 else "#2d3436"
-            st.markdown(f"<div style='font-size:28px'>CAGR Esperado: <b style='color:{c_col}; font-size:42px'>{cagr:.2f}%</b></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-size:32px'>CAGR Esperado: <b style='color:{c_col}; font-size:48px'>{cagr:.2f}%</b></div>", unsafe_allow_html=True)
             
         with cc2:
             yrs = list(range(datetime.now().year, datetime.now().year+6))
             vals = [price * ((1 + cagr/100)**i) for i in range(6)]
-            fig = go.Figure(go.Scatter(x=yrs, y=vals, mode='lines+markers', line=dict(color='#0984e3', width=5), marker=dict(size=14)))
+            fig = go.Figure(go.Scatter(x=yrs, y=vals, mode='lines+markers', line=dict(color='#0984e3', width=6), marker=dict(size=16)))
             fig.update_layout(
-                title={'text': "Curva de Valor Teórico", 'font': {'size': 24}},
-                font=dict(size=18),
-                height=400
+                title={'text': "Curva de Valor Teórico", 'font': {'size': 28}},
+                font=dict(size=20),
+                height=450
             )
             st.plotly_chart(fig, use_container_width=True)
 
+    # TAB 2: DIVIDENDOS
     with t2:
         st.markdown("<br>", unsafe_allow_html=True)
         if divs['rate'] and divs['avg_5y'] > 0:
@@ -420,28 +385,29 @@ if ticker:
             with cd1:
                 st.info("ℹ️ Modelo de Geraldine Weiss (Yield Theory)")
                 st.markdown(f"""
-                <div style='font-size:24px; line-height:2'>
+                <div style='font-size:26px; line-height:2'>
                     💰 Dividendo Anual: <b>${divs['rate']}</b><br>
                     📉 Media Histórica: <b>{divs['avg_5y']*100:.2f}%</b><br>
                     🏁 Valor Justo: <b style='color:#2980b9'>${fair_yld:.2f}</b>
                 </div>
                 """, unsafe_allow_html=True)
             with cd2:
-                fig = go.Figure(go.Bar(x=['Actual', 'Media'], y=[divs['current']*100, divs['avg_5y']*100], marker_color=['#00b894','#b2bec3'], texttemplate='%{y:.2f}%', textfont={'size': 20}))
-                fig.update_layout(title={'text': "Rentabilidad Comparada", 'font': {'size': 24}}, font=dict(size=18), height=350)
+                fig = go.Figure(go.Bar(x=['Actual', 'Media'], y=[divs['current']*100, divs['avg_5y']*100], marker_color=['#00b894','#b2bec3'], texttemplate='%{y:.2f}%', textfont={'size': 24}))
+                fig.update_layout(title={'text': "Rentabilidad Comparada", 'font': {'size': 28}}, font=dict(size=20), height=400)
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning("Empresa sin historial de dividendos suficiente.")
 
+    # TAB 3: RATIOS GIGANTES
     with t3:
         st.markdown("<br>", unsafe_allow_html=True)
-        st.subheader("🔎 Salud Financiera vs Histórico")
+        st.subheader("🔎 Análisis Fundamental vs Histórico")
         
         ratios_to_show = {
-            'PER (P/E)': {'curr': info.get('trailingPE'), 'avg': ext_ratios.get('PER')},
-            'Price/Sales': {'curr': info.get('priceToSalesTrailing12Months'), 'avg': ext_ratios.get('Price/Sales')},
-            'Price/Book': {'curr': info.get('priceToBook'), 'avg': ext_ratios.get('Price/Book')},
-            'EV/EBITDA': {'curr': info.get('enterpriseToEbitda'), 'avg': ext_ratios.get('EV/EBITDA')}
+            'PER (P/E)': {'curr': info.get('trailingPE'), 'avg': hist_ratios.get('PER')},
+            'Price/Sales': {'curr': info.get('priceToSalesTrailing12Months'), 'avg': hist_ratios.get('Price/Sales')},
+            'Price/Book': {'curr': info.get('priceToBook'), 'avg': hist_ratios.get('Price/Book')},
+            'EV/EBITDA': {'curr': info.get('enterpriseToEbitda'), 'avg': hist_ratios.get('EV/EBITDA')}
         }
         
         rows = []
@@ -455,5 +421,5 @@ if ticker:
             elif curr:
                 rows.append([name, f"{curr:.2f}", "N/A", "-", "-"])
         
-        df_ratios = pd.DataFrame(rows, columns=['Ratio', 'Actual', 'Media Histórica', 'Desviación', 'Diagnóstico'])
+        df_ratios = pd.DataFrame(rows, columns=['Ratio', 'Actual', 'Media Histórica', 'Desv.', 'Diagnóstico'])
         st.table(df_ratios)
