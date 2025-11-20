@@ -3,312 +3,293 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import requests
 from datetime import datetime, timedelta
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Valuación Pro (Estilo Excel)", layout="wide", page_icon="📊")
+st.set_page_config(page_title="Valuación Pro", layout="wide", page_icon="📈")
 
-# --- ESTILOS CSS (DISEÑO V1 MEJORADO) ---
+# --- ESTILOS CSS ---
 st.markdown("""
     <style>
     .metric-card {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
-        border-radius: 10px;
-        padding: 20px;
+        border-radius: 8px;
+        padding: 15px;
         text-align: center;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
-    .metric-label { font-size: 14px; color: #666; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px;}
-    .metric-value { font-size: 24px; font-weight: bold; color: #2c3e50; }
-    .metric-delta-pos { font-size: 14px; color: #27ae60; font-weight: 600; }
-    .metric-delta-neg { font-size: 14px; color: #c0392b; font-weight: 600; }
-    h1, h2, h3 { font-family: 'Source Sans Pro', sans-serif; color: #333; }
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] { background-color: #f8f9fa; border-radius: 4px; }
-    .stTabs [aria-selected="true"] { background-color: #fff; border-bottom: 2px solid #2980b9; color: #2980b9; }
+    .metric-label { font-size: 12px; color: #777; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
+    .metric-value { font-size: 26px; font-weight: 700; color: #2c3e50; }
+    .metric-sub { font-size: 14px; font-weight: 500; margin-top: 5px; }
+    .pos { color: #27ae60; }
+    .neg { color: #c0392b; }
+    .neu { color: #7f8c8d; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. FUNCIONES DE DATOS ---
+# --- 1. MOTOR DE DATOS ---
 
 @st.cache_data(ttl=3600)
-def get_stock_data(ticker):
-    """Obtiene info básica y calcula dividendos manualmente para evitar errores."""
+def get_full_analysis(ticker, years_hist=10):
+    """Obtiene toda la data necesaria y corrige discrepancias de Yahoo."""
     stock = yf.Ticker(ticker)
     info = stock.info
     
-    # CORRECCIÓN DIVIDENDOS: Cálculo manual para precisión
-    # Yahoo a veces da el yield en 0.05 y otras en 5.0. 
-    # Lo más seguro es: (DividendRate / CurrentPrice)
-    
     price = info.get('currentPrice', info.get('regularMarketPreviousClose'))
-    div_rate = info.get('dividendRate', 0) # Dinero real (ej $1.50)
+    if not price: return None
     
-    # 1. Yield Actual Real
-    if div_rate and price and price > 0:
-        calculated_yield = div_rate / price
-    else:
-        calculated_yield = 0
+    # 1. Limpieza de Dividendos (Caso ZTS)
+    # Yahoo: currentYield viene como 0.017 (1.7%)
+    # Yahoo: fiveYearAvg viene como 0.81 (0.81%) -> Hay que dividir por 100 siempre
+    
+    current_yield = info.get('dividendYield', 0)
+    avg_5y_yield = info.get('fiveYearAvgDividendYield', 0)
+    
+    if avg_5y_yield and avg_5y_yield > 0:
+        # Asumimos siempre que el histórico viene en formato porcentual entero (ej 0.81 o 5.5)
+        avg_5y_yield = avg_5y_yield / 100
         
-    # 2. Media 5 Años (Normalización)
-    avg_5y = info.get('fiveYearAvgDividendYield')
-    if avg_5y is not None:
-        # Si es mayor que 1 (ej: 3.5), es un porcentaje, dividimos por 100.
-        # Si es menor (ej: 0.035), ya es decimal.
-        if avg_5y > 1: 
-            avg_5y = avg_5y / 100
-    else:
-        avg_5y = 0
-        
-    return info, price, calculated_yield, avg_5y
-
-@st.cache_data(ttl=3600)
-def get_historical_pe_mean(ticker, years=10):
-    """Calcula la media del PER de los últimos X años."""
+    # 2. PER Histórico (Media)
+    pe_mean = 15.0 # Valor por defecto
     try:
-        stock = yf.Ticker(ticker)
-        start_date = (datetime.now() - timedelta(days=years*365 + 180)).strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=years_hist*365 + 180)).strftime('%Y-%m-%d')
         hist = stock.history(start=start_date, interval="1mo")
         
-        if hist.empty: return None
-        if hist.index.tz is not None: hist.index = hist.index.tz_localize(None)
-
-        financials = stock.financials.T
-        if financials.empty: return None
-        financials.index = pd.to_datetime(financials.index)
-        if financials.index.tz is not None: financials.index = financials.index.tz_localize(None)
-        financials = financials.sort_index()
-
-        pe_values = []
-        for date, row in hist.iterrows():
-            past_reports = financials[financials.index <= date]
-            if not past_reports.empty:
-                latest = past_reports.iloc[-1]
-                eps = np.nan
-                for k in ['Diluted EPS', 'Basic EPS', 'DilutedEPS']:
-                    if k in latest and pd.notna(latest[k]):
-                        eps = latest[k]
-                        break
-                
-                if pd.isna(eps):
-                    try:
-                        ni = latest.get('Net Income Common Stockholders')
-                        shares = latest.get('Basic Average Shares')
-                        if ni and shares: eps = ni / shares
-                    except: pass
-
-                if eps and eps > 0:
-                    pe = row['Close'] / eps
-                    if 5 < pe < 200: pe_values.append(pe)
-        
-        return np.mean(pe_values) if pe_values else None
+        if not hist.empty and info.get('trailingEps'):
+            if hist.index.tz is not None: hist.index = hist.index.tz_localize(None)
+            financials = stock.financials.T
+            financials.index = pd.to_datetime(financials.index)
+            if financials.index.tz is not None: financials.index = financials.index.tz_localize(None)
+            financials = financials.sort_index()
+            
+            pe_values = []
+            for date, row in hist.iterrows():
+                # EPS de ese momento
+                past = financials[financials.index <= date]
+                if not past.empty:
+                    # Intentar sacar EPS
+                    latest = past.iloc[-1]
+                    eps_val = np.nan
+                    for k in ['Diluted EPS', 'Basic EPS', 'DilutedEPS']:
+                        if k in latest and pd.notna(latest[k]):
+                            eps_val = latest[k]
+                            break
+                    
+                    if eps_val and eps_val > 0:
+                        pe = row['Close'] / eps_val
+                        if 5 < pe < 200: pe_values.append(pe)
+            
+            if pe_values:
+                pe_mean = np.mean(pe_values)
     except:
-        return None
+        pass # Mantenemos el defecto o lo que haya en info
 
-@st.cache_data(ttl=3600)
-def scrape_estimates_check(ticker):
-    """Verifica si hay conexión con VI (solo headers)."""
-    url = f"https://valueinvesting.io/{ticker}/estimates"
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    try:
-        r = requests.head(url, headers=headers, timeout=3)
-        return r.status_code == 200
-    except:
-        return False
+    return {
+        'info': info,
+        'price': price,
+        'pe_mean': pe_mean,
+        'div_data': {'current': current_yield, 'avg_5y': avg_5y_yield}
+    }
 
-# --- 2. COMPONENTES VISUALES (ESTILO EXCEL/V1) ---
+# --- 2. COMPONENTES VISUALES ---
 
-def card(label, value, delta=None, is_good=True):
-    """Crea una tarjeta métrica HTML bonita."""
-    delta_html = ""
-    if delta:
-        color_class = "metric-delta-pos" if is_good else "metric-delta-neg"
-        delta_html = f"<div class='{color_class}'>{delta}</div>"
-    
+def card_html(label, value, sub_value=None, color_class="neu"):
+    sub_html = f"<div class='metric-sub {color_class}'>{sub_value}</div>" if sub_value else ""
     st.markdown(f"""
     <div class="metric-card">
         <div class="metric-label">{label}</div>
         <div class="metric-value">{value}</div>
-        {delta_html}
+        {sub_html}
     </div>
     """, unsafe_allow_html=True)
 
-def plot_bar_comparison(current, target, title, label_target="Valor Objetivo"):
-    """Gráfico de Barras Horizontales (Estilo Excel)."""
+def plot_valuation_bar(price, fair_value, analyst_target):
+    """Replica el gráfico de barras horizontales del Excel."""
+    
+    y_cat = ['Valoración']
+    
     fig = go.Figure()
     
-    # Barra Precio Actual
+    # 1. Precio Actual
     fig.add_trace(go.Bar(
-        y=['Comparativa'], x=[current], name='Precio Actual', orientation='h',
-        marker_color='#95a5a6', text=f"${current:.2f}", textposition='auto',
-        hovertemplate="Precio Actual: $%{x:.2f}<extra></extra>"
+        y=y_cat, x=[price], name='Cotización Actual', orientation='h',
+        marker_color='#e67e22', text=f"${price:.2f}", textposition='auto',
+        hovertemplate="Actual: $%{x:.2f}<extra></extra>"
     ))
     
-    # Barra Objetivo
-    color = '#27ae60' if target > current else '#c0392b'
+    # 2. Valor Razonable (Histórico)
     fig.add_trace(go.Bar(
-        y=['Comparativa'], x=[target], name=label_target, orientation='h',
-        marker_color=color, text=f"${target:.2f}", textposition='auto',
-        hovertemplate=f"{label_target}: $%{{x:.2f}}<extra></extra>"
+        y=y_cat, x=[fair_value], name='Valor Razonable (Histórico)', orientation='h',
+        marker_color='#27ae60', text=f"${fair_value:.2f}", textposition='auto',
+        hovertemplate="Fair Value: $%{x:.2f}<extra></extra>"
     ))
+    
+    # 3. Analistas
+    if analyst_target and analyst_target > 0:
+        fig.add_trace(go.Bar(
+            y=y_cat, x=[analyst_target], name='Obj. Analistas', orientation='h',
+            marker_color='#2980b9', text=f"${analyst_target:.2f}", textposition='auto',
+            hovertemplate="Analistas: $%{x:.2f}<extra></extra>"
+        ))
 
     fig.update_layout(
-        title=title,
-        barmode='group', 
+        title="Comparativa de Valoración",
+        barmode='group',
         height=250,
-        xaxis_title="Precio ($)",
         margin=dict(l=20, r=20, t=40, b=20),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        plot_bgcolor='rgba(0,0,0,0)'
+        xaxis=dict(showgrid=True, gridcolor='#f0f0f0'),
+        plot_bgcolor='white'
     )
-    # Corrección Warning: Usamos el standard de Streamlit sin width explícito
     st.plotly_chart(fig, use_container_width=True)
 
 # --- 3. INTERFAZ PRINCIPAL ---
 
 with st.sidebar:
-    st.header("🎛️ Panel de Control")
-    ticker = st.text_input("Ticker", value="GOOGL").upper()
+    st.header("🎛️ Configuración")
+    ticker = st.text_input("Ticker", value="ZTS").upper() # Probamos ZTS por defecto
+    st.divider()
+    
+    st.subheader("⚙️ Parámetros")
+    growth_input = st.number_input("Crecimiento Estimado (5y) %", value=10.0, step=0.5)
+    years_hist = st.slider("Años para Media Histórica", 5, 10, 10)
     
     st.divider()
-    st.subheader("🔮 Proyección")
-    
-    # Link externo limpio
-    st.info("Para ver estimaciones fiables, consulta:")
-    st.markdown(f"[👉 ValueInvesting.io/{ticker}](https://valueinvesting.io/{ticker}/estimates)")
-    
-    growth_input = st.number_input("Crecimiento EPS Estimado (%)", value=12.0, step=0.5)
-    
-    st.divider()
-    years_hist = st.slider("Años Historia (PER)", 5, 10, 10)
+    st.caption("Datos: Yahoo Finance API")
 
 if ticker:
-    try:
-        info, price, div_yield, avg_div_5y = get_stock_data(ticker)
-    except Exception:
-        st.error("Ticker no encontrado o error de conexión.")
+    data = get_full_analysis(ticker, years_hist)
+    
+    if not data:
+        st.error("Ticker no encontrado.")
         st.stop()
-
+        
+    info = data['info']
+    price = data['price']
+    pe_mean = data['pe_mean']
+    divs = data['div_data']
+    
     eps = info.get('trailingEps', 0)
-    pe_hist_mean = get_historical_pe_mean(ticker, years=years_hist)
-    if pe_hist_mean is None: pe_hist_mean = 15.0
-
+    analyst_target = info.get('targetMeanPrice', 0)
+    
+    # --- CÁLCULOS CORE ---
+    fair_value = eps * pe_mean
+    margin_safety = ((fair_value - price) / price) * 100
+    
     # --- HEADER ---
     st.title(f"{info.get('shortName', ticker)}")
-    st.caption(f"Sector: {info.get('sector')} | Industria: {info.get('industry')}")
-
-    # --- DASHBOARD DE MÉTRICAS (CARDS V1) ---
+    st.markdown(f"**{info.get('sector', '')}** | {info.get('industry', '')}")
+    
+    # --- DASHBOARD PRINCIPAL (ESTILO EXCEL) ---
+    # Fila 1: KPIs
     c1, c2, c3, c4 = st.columns(4)
     
-    with c1: card("Precio Actual", f"${price:.2f}")
-    with c2: card("EPS (TTM)", f"${eps:.2f}")
-    
-    # Lógica Dividendos Dashboard
-    yield_display = f"{div_yield*100:.2f}%"
-    avg_display = f"{avg_div_5y*100:.2f}%" if avg_div_5y else "N/A"
-    
-    delta_msg = None
-    good_div = False
-    if div_yield and avg_div_5y:
-        diff = div_yield - avg_div_5y
-        delta_msg = f"{diff*100:+.2f}% vs Media"
-        good_div = diff > 0 # Es bueno si el yield actual es mayor a la media
+    with c1:
+        card_html("Cotización Actual", f"${price:.2f}")
         
-    with c3: card("Div. Yield Actual", yield_display)
-    with c4: card("Yield Media 5y", avg_display, delta=delta_msg, is_good=good_div)
-
-    st.markdown("---")
-
-    # --- PESTAÑAS ---
-    tab_proj, tab_div, tab_models = st.tabs(["🚀 Proyección a 5 Años", "💰 Dividendos (Weiss)", "⚖️ Otros Modelos"])
-
-    # --- TAB 1: PROYECCIÓN (Estilo Excel) ---
-    with tab_proj:
-        col_input, col_res = st.columns([1, 2])
-        
-        with col_input:
-            st.subheader("Configuración")
-            # PER Final editable
-            exit_pe = st.number_input("PER de Salida (Año 5)", value=float(round(pe_hist_mean, 1)), step=0.5,
-                                     help="El múltiplo al que crees que cotizará la acción en el futuro.")
-            st.caption(f"*La media histórica calculada es {pe_hist_mean:.1f}x*")
+    with c2:
+        margin_color = "pos" if margin_safety > 0 else "neg"
+        card_html("Valor Razonable (Histórico)", f"${fair_value:.2f}", 
+                 f"{margin_safety:+.1f}% Margen", margin_color)
+                 
+    with c3:
+        if analyst_target:
+            analyst_margin = ((analyst_target - price) / price) * 100
+            a_color = "pos" if analyst_margin > 0 else "neg"
+            card_html("Precio Obj. Analistas", f"${analyst_target:.2f}", 
+                     f"{analyst_margin:+.1f}% Potencial", a_color)
+        else:
+            card_html("Precio Obj. Analistas", "N/A")
             
-            # Cálculos
+    with c4:
+        # Yield Dashboard
+        curr = divs['current']
+        avg = divs['avg_5y']
+        
+        if curr and avg:
+            diff = curr - avg
+            color = "pos" if diff > 0 else "neg" # Yield más alto que la media es bueno (pos)
+            sub_text = f"Media 5y: {avg*100:.2f}%"
+            card_html("Rentabilidad / Div.", f"{curr*100:.2f}%", sub_text, color)
+        elif curr:
+             card_html("Rentabilidad / Div.", f"{curr*100:.2f}%", "Sin media histórica")
+        else:
+             card_html("Rentabilidad / Div.", "0.00%", "No paga dividendo")
+
+    # Fila 2: Gráfico Visual
+    st.markdown("---")
+    plot_valuation_bar(price, fair_value, analyst_target)
+    
+    # --- PESTAÑAS DE DETALLE ---
+    tab1, tab2, tab3 = st.tabs(["🚀 Proyección a 5 Años", "💰 Análisis Dividendos", "📋 Datos Fundamentales"])
+    
+    # TAB 1: PROYECCIÓN
+    with tab1:
+        col_calc, col_res = st.columns([1, 2])
+        
+        with col_calc:
+            st.subheader("Calculadora")
+            exit_pe = st.number_input("PER de Salida (Año 5)", value=float(round(pe_mean, 1)), 
+                                     help="Por defecto es la media histórica.")
+            
             future_eps = eps * ((1 + growth_input/100) ** 5)
             future_price = future_eps * exit_pe
             cagr = ((future_price / price) ** (1/5) - 1) * 100
             
             st.divider()
-            st.markdown(f"**EPS Año 5:** ${future_eps:.2f}")
-            st.markdown(f"**Precio Objetivo:** ${future_price:.2f}")
+            st.write(f"**EPS (Año 5):** ${future_eps:.2f}")
+            st.write(f"**Precio (Año 5):** ${future_price:.2f}")
             
-            color_cagr = "green" if cagr > 10 else "red"
-            st.markdown(f"**CAGR Esperado:** <span style='color:{color_cagr}; font-size:18px; font-weight:bold'>{cagr:.2f}%</span>", unsafe_allow_html=True)
+            c_color = "green" if cagr > 10 else "black"
+            st.markdown(f"#### CAGR Esperado: <span style='color:{c_color}'>{cagr:.2f}%</span>", unsafe_allow_html=True)
 
         with col_res:
-            plot_bar_comparison(price, future_price, "Potencial de Revalorización (5 Años)", "Precio Objetivo 2029")
+            # Gráfico de línea simple proyección
+            years = list(range(datetime.now().year, datetime.now().year + 6))
+            vals = [price * ((1 + cagr/100) ** i) for i in range(6)]
             
-            # Tabla estilo Excel
-            df_excel = pd.DataFrame({
-                'Concepto': ['EPS Actual', 'Crecimiento Estimado', 'EPS Futuro (5y)', 'PER de Salida', 'Precio Objetivo'],
-                'Valor': [f"${eps:.2f}", f"{growth_input}%", f"${future_eps:.2f}", f"{exit_pe}x", f"${future_price:.2f}"]
-            })
-            st.table(df_excel)
-
-    # --- TAB 2: DIVIDENDOS (WEISS - Corregido) ---
-    with tab_div:
-        if div_yield > 0 and avg_div_5y > 0:
+            fig_proj = go.Figure()
+            fig_proj.add_trace(go.Scatter(x=years, y=vals, mode='lines+markers', name='Crecimiento', line=dict(color='#27ae60', width=3)))
+            fig_proj.update_layout(title="Proyección de Precio Teórico", height=300, showlegend=False)
+            st.plotly_chart(fig_proj, use_container_width=True)
+            
+    # TAB 2: DIVIDENDOS (Detalle)
+    with tab2:
+        curr = divs['current']
+        avg = divs['avg_5y']
+        
+        if curr and avg:
             div_rate = info.get('dividendRate', 0)
+            fair_yield_price = div_rate / avg if avg > 0 else 0
+            margin_yield = ((fair_yield_price - price) / price) * 100
             
-            # Valor Justo Weiss
-            fair_weiss = div_rate / avg_div_5y
-            margin_weiss = ((fair_weiss - price) / price) * 100
-            
-            c_d1, c_d2 = st.columns([1, 2])
+            c_d1, c_d2 = st.columns(2)
             with c_d1:
-                st.subheader("Análisis Yield Theory")
-                st.write(f"La acción paga **${div_rate}** al año.")
-                st.write(f"Históricamente, el mercado exige un retorno del **{avg_div_5y*100:.2f}%**.")
-                st.write(f"Actualmente ofrece un **{div_yield*100:.2f}%**.")
+                st.markdown("### Yield Theory (Geraldine Weiss)")
+                st.write("Si la acción volviera a cotizar a su rentabilidad por dividendo media histórica:")
+                st.metric("Valor Justo (Por Dividendos)", f"${fair_yield_price:.2f}", f"{margin_yield:+.1f}%")
                 
-                if div_yield > avg_div_5y:
-                    st.success("✅ INFRAVALORADA: Yield actual superior a la media.")
-                else:
-                    st.error("❌ SOBREVALORADA: Yield actual inferior a la media.")
-            
             with c_d2:
-                plot_bar_comparison(price, fair_weiss, "Valoración por Dividendos (Weiss)", "Valor Justo (Weiss)")
-
+                # Gráfico comparativo Yields
+                fig_y = go.Figure()
+                fig_y.add_trace(go.Bar(x=['Yield Actual', 'Media 5 Años'], y=[curr*100, avg*100], marker_color=['#2980b9', '#95a5a6']))
+                fig_y.update_layout(title="Comparativa de Rentabilidad (%)", height=300)
+                st.plotly_chart(fig_y, use_container_width=True)
         else:
-            st.info("Esta empresa no paga dividendos o faltan datos históricos para el análisis.")
-
-    # --- TAB 3: MODELOS CLÁSICOS ---
-    with tab_models:
-        st.subheader("Referencias Rápidas")
-        
-        # Graham
-        bvps = info.get('bookValue', 0)
-        val_graham = (22.5 * eps * bvps)**0.5 if (eps>0 and bvps>0) else 0
-        
-        # Lynch (Snapshot)
-        val_lynch = eps * growth_input
-        
-        col_m1, col_m2 = st.columns(2)
-        
-        with col_m1:
-            st.markdown("#### Fórmula Benjamin Graham")
-            if val_graham > 0:
-                st.metric("Valor Graham", f"${val_graham:.2f}", delta=f"{((val_graham-price)/price)*100:.1f}%")
-                st.progress(min(val_graham/max(price, val_graham+1), 1.0))
-            else:
-                st.warning("No aplicable (EPS o Valor en Libros negativo)")
-                
-        with col_m2:
-            st.markdown("#### Valoración Peter Lynch (PEG=1)")
-            if val_lynch > 0:
-                st.metric("Valor Lynch", f"${val_lynch:.2f}", delta=f"{((val_lynch-price)/price)*100:.1f}%")
-                st.progress(min(val_lynch/max(price, val_lynch+1), 1.0))
-            else:
-                st.warning("No aplicable (EPS negativo)")
+            st.info("Datos insuficientes para análisis profundo de dividendos.")
+            
+    # TAB 3: TABLA DATOS
+    with tab3:
+        st.markdown("#### Métricas Clave")
+        dat = {
+            'Métrica': ['PER Actual', 'PER Medio Histórico', 'Beta', 'Precio/Ventas', 'EV/EBITDA'],
+            'Valor': [
+                f"{info.get('trailingPE', 0):.2f}x",
+                f"{pe_mean:.2f}x",
+                f"{info.get('beta', 0):.2f}",
+                f"{info.get('priceToSalesTrailing12Months', 0):.2f}x",
+                f"{info.get('enterpriseToEbitda', 0):.2f}x"
+            ]
+        }
+        st.table(pd.DataFrame(dat))
