@@ -6,38 +6,36 @@ import plotly.graph_objects as go
 import requests
 from datetime import datetime, timedelta
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Master Valuation App", layout="wide", page_icon="💎")
+# --- CONFIGURACIÓN INICIAL ---
+st.set_page_config(page_title="Valuación Pro & Dividendos", layout="wide", page_icon="📊")
 
-# --- ESTILOS CSS PERSONALIZADOS ---
+# --- ESTILOS CSS ---
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stMetric { background-color: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid #e9ecef; }
-    h1, h2, h3 { color: #2c3e50; }
-    .highlight { color: #27ae60; font-weight: bold; }
+    .stMetric { background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #f8f9fa; border-radius: 4px 4px 0 0; gap: 1px; padding-top: 10px; padding-bottom: 10px; }
+    .stTabs [aria-selected="true"] { background-color: #ffffff; border-bottom: 2px solid #2c3e50; color: #2c3e50; font-weight: bold;}
+    .highlight-div { background-color: #e8f5e9; padding: 10px; border-radius: 5px; border-left: 5px solid #2e7d32; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. FUNCIONES DE DATOS (CORREGIDAS Y CACHEABLES) ---
+# --- 1. MOTOR DE DATOS Y SCRAPING ---
 
 @st.cache_data(ttl=3600)
-def get_fundamental_data(ticker):
-    """Obtiene datos fundamentales sin guardar el objeto Ticker entero."""
+def get_stock_basic_info(ticker):
     stock = yf.Ticker(ticker)
     return stock.info
 
 @st.cache_data(ttl=3600)
-def get_historical_pe_data(ticker, years=10):
-    """Calcula la media del PER histórico."""
+def get_historical_pe_mean(ticker, years=10):
+    """Calcula media PER histórica eliminando outliers."""
     try:
         stock = yf.Ticker(ticker)
         start_date = (datetime.now() - timedelta(days=years*365 + 180)).strftime('%Y-%m-%d')
         hist = stock.history(start=start_date, interval="1mo")
         
         if hist.empty: return None
-
-        # Limpieza de zona horaria (Fix del error anterior)
         if hist.index.tz is not None: hist.index = hist.index.tz_localize(None)
 
         financials = stock.financials.T
@@ -52,239 +50,268 @@ def get_historical_pe_data(ticker, years=10):
             past_reports = financials[financials.index <= date]
             if not past_reports.empty:
                 latest = past_reports.iloc[-1]
-                # Extracción robusta de EPS
                 eps = np.nan
-                for key in ['Diluted EPS', 'Basic EPS', 'DilutedEPS']:
-                    if key in latest and pd.notna(latest[key]):
-                        eps = latest[key]
+                # Buscamos EPS en varias columnas posibles
+                for k in ['Diluted EPS', 'Basic EPS', 'DilutedEPS']:
+                    if k in latest and pd.notna(latest[k]):
+                        eps = latest[k]
                         break
                 
-                if pd.isna(eps) or eps <= 0: continue
-                
-                pe = row['Close'] / eps
-                if 0 < pe < 200: pe_values.append(pe) # Filtrar ruido
+                # Si falla, intentamos calcularlo
+                if pd.isna(eps):
+                    try:
+                        ni = latest.get('Net Income Common Stockholders')
+                        shares = latest.get('Basic Average Shares')
+                        if ni and shares: eps = ni / shares
+                    except: pass
+
+                if eps and eps > 0:
+                    pe = row['Close'] / eps
+                    if 5 < pe < 150: pe_values.append(pe) # Filtro anti-ruido
         
-        if not pe_values: return None
-        return np.mean(pe_values)
+        return np.mean(pe_values) if pe_values else None
     except:
         return None
 
 @st.cache_data(ttl=3600)
-def try_scrape_growth(ticker):
-    """Intenta extraer la tabla de crecimiento de valueinvesting.io."""
+def scrape_valueinvesting_io(ticker):
+    """Intenta obtener tabla de estimaciones con Headers de navegador real."""
     url = f"https://valueinvesting.io/{ticker}/estimates"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    
+    # Headers para simular ser un humano y evitar bloqueo básico (CORS/Bot detection)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Referer': 'https://www.google.com/',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    }
     
     try:
-        # Nota: Pandas read_html busca tablas en el HTML
-        dfs = pd.read_html(url, header=0)
-        # Buscamos la tabla que tenga "Revenue Growth" o "EPS Growth"
-        for df in dfs:
-            if 'EPS Growth' in df.columns or (df.iloc[:, 0].astype(str).str.contains("EPS Growth").any()):
-                # Limpieza básica si la encuentra
-                return df
-    except:
-        return None # Si falla por captcha, devolvemos None silenciosamente
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            dfs = pd.read_html(response.text)
+            for df in dfs:
+                # Buscamos la tabla correcta por palabras clave
+                if df.apply(lambda x: x.astype(str).str.contains('Growth|Revenue|EPS', case=False)).any().any():
+                    return df
+    except Exception:
+        return None
     return None
 
-# --- 2. FUNCIONES DE VISUALIZACIÓN ---
+# --- 2. COMPONENTES VISUALES ---
 
-def draw_gauge(current, fair, title):
-    """Dibuja un velocímetro comparando precio actual vs valor justo."""
+def render_gauge(current, fair, title):
     fig = go.Figure(go.Indicator(
         mode = "number+gauge+delta",
         value = current,
         domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': title, 'font': {'size': 16}},
+        title = {'text': title, 'font': {'size': 14}},
         delta = {'reference': fair, 'relative': True, 'valueformat': '.1%'},
         gauge = {
-            'axis': {'range': [min(current, fair)*0.6, max(current, fair)*1.4]},
+            'axis': {'range': [min(current, fair)*0.5, max(current, fair)*1.5]},
             'bar': {'color': "#2c3e50"},
             'steps': [
-                {'range': [0, fair], 'color': "#d4edda"},
-                {'range': [fair, max(current, fair)*1.5], 'color': "#f8d7da"}],
-            'threshold': {'line': {'color': "green", 'width': 4}, 'thickness': 0.75, 'value': fair}
+                {'range': [0, fair], 'color': "#c8e6c9"}, # Verde (Barato)
+                {'range': [fair, max(current, fair)*2], 'color': "#ffcdd2"}], # Rojo (Caro)
+            'threshold': {'line': {'color': "green", 'width': 3}, 'thickness': 0.8, 'value': fair}
         }
     ))
-    fig.update_layout(height=200, margin=dict(l=30, r=30, t=40, b=10))
-    return fig
+    fig.update_layout(height=180, margin=dict(l=20,r=20,t=30,b=10))
+    st.plotly_chart(fig, use_container_width=True)
 
-# --- 3. INTERFAZ DE USUARIO ---
+# --- 3. INTERFAZ PRINCIPAL ---
 
 with st.sidebar:
-    st.header("🔎 Panel de Control")
-    ticker = st.text_input("Ticker (ej. GOOGL, META)", value="META").upper()
+    st.header("🎛️ Configuración")
+    ticker = st.text_input("Ticker", value="GOOGL").upper()
     
     st.divider()
-    st.subheader("⚙️ Parámetros de Crecimiento")
+    st.subheader("🔮 Parámetros de Proyección")
     
-    # Intentar scraping automático
-    scraped_data = try_scrape_growth(ticker)
-    default_growth = 12.0
-    
-    if scraped_data is not None:
-        st.success("✅ Datos de valueinvesting.io detectados")
-        # Aquí podrías procesar el DF para sacar la media, pero por seguridad mostramos tabla
+    # Scraping Intent
+    scraped_df = scrape_valueinvesting_io(ticker)
+    if scraped_df is not None:
+        st.success("✅ Datos de ValueInvesting conectados")
+        with st.expander("Ver Tabla de Estimaciones"):
+            st.dataframe(scraped_df)
     else:
-        st.info("ℹ️ Conexión directa bloqueada por Captcha. Usa el enlace:")
-        
-    st.markdown(f"[🔗 Ver Estimaciones Oficiales](https://valueinvesting.io/{ticker}/estimates)")
-    
-    growth_rate = st.number_input("Crecimiento EPS Estimado (5 años) %", 
-                                 value=default_growth, min_value=0.0, max_value=100.0, step=0.5)
-    
-    years_hist = st.slider("Años historia PER", 5, 10, 10)
+        st.info(f"ℹ️ No se pudo extraer la tabla automática (Captcha).")
+        st.markdown(f"[👉 Ver ValueInvesting.io Manualmente](https://valueinvesting.io/{ticker}/estimates)")
 
-# --- LÓGICA PRINCIPAL ---
+    growth_input = st.number_input("Crecimiento EPS Estimado (%)", value=12.0, step=0.5, help="Crecimiento anual compuesto para los próximos 5 años.")
+    
+    st.divider()
+    st.subheader("⚙️ Configuración Histórica")
+    years_hist = st.slider("Años Historia (Media PER/Div)", 5, 10, 10)
 
 if ticker:
-    # 1. Cargar Datos
-    info = get_fundamental_data(ticker)
+    info = get_stock_basic_info(ticker)
     price = info.get('currentPrice', info.get('regularMarketPreviousClose'))
-    
+
     if not price:
         st.error("Ticker no encontrado.")
         st.stop()
 
-    # Variables clave
+    # --- CÁLCULOS PREVIOS ---
     eps = info.get('trailingEps', 0)
-    bvps = info.get('bookValue', 0) # Valor en libros por acción
     pe_current = info.get('trailingPE', 0)
+    div_yield = info.get('dividendYield', 0) # Ej: 0.03
+    avg_div_5y = info.get('fiveYearAvgDividendYield', 0) # Ej: 3.5 (Yahoo suele darlo en %)
+
+    # Normalización de Dividendos (Yahoo es inconsistente)
+    if avg_div_5y and avg_div_5y > 1: avg_div_5y = avg_div_5y / 100
     
-    # Header
+    # Cálculo PER Histórico
+    pe_hist_mean = get_historical_pe_mean(ticker, years=years_hist)
+    if pe_hist_mean is None: pe_hist_mean = 15.0 # Fallback si no hay datos
+
+    # --- DASHBOARD SUPERIOR ---
     st.title(f"{info.get('shortName', ticker)}")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Precio", f"${price}")
-    col2.metric("EPS (TTM)", f"${eps}")
-    col3.metric("PER Actual", f"{pe_current:.2f}x" if pe_current else "N/A")
-    col4.metric("Beta", f"{info.get('beta', 'N/A')}")
+    st.caption(f"{info.get('sector')} | {info.get('industry')}")
 
-    # --- PESTAÑAS DE ANÁLISIS ---
-    tab1, tab2, tab3, tab4 = st.tabs(["🏆 Valoración Múltiple", "📈 Crecimiento & Lynch", "💵 Dividendos", "🔎 Graham"])
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Precio Actual", f"${price}")
+    m2.metric("EPS (TTM)", f"${eps}")
+    
+    # Métricas de Dividendos en Dashboard Principal
+    delta_div = None
+    if div_yield and avg_div_5y:
+        delta_div = f"Media 5y: {avg_div_5y*100:.2f}%"
+    
+    m3.metric("Div. Yield Actual", f"{div_yield*100:.2f}%" if div_yield else "0%", delta=None)
+    m4.metric("Media Histórica Div.", f"{avg_div_5y*100:.2f}%" if avg_div_5y else "N/A", 
+              delta="Infravalorada (Yield Alto)" if (div_yield and avg_div_5y and div_yield > avg_div_5y) else "Sobrevalorada")
 
-    # TAB 1: RESUMEN DE VALORACIONES
-    with tab1:
-        st.subheader("Comparativa de Modelos de Valoración")
+    # --- PESTAÑAS ---
+    tab_proj, tab_div, tab_val, tab_data = st.tabs(["🚀 Proyección 5 Años (Calculadora)", "💰 Dividendos (Geraldine Weiss)", "⚖️ Modelos Clásicos", "📉 Gráficos"])
+
+    # TAB 1: PROYECCIÓN 5 AÑOS (SOLICITUD USUARIO: PER FINAL ELEGIBLE)
+    with tab_proj:
+        st.subheader("Calculadora de Retorno Esperado (5 Años)")
         
-        # A. PER Histórico
-        avg_pe = get_historical_pe_data(ticker, years=years_hist)
-        val_pe = eps * avg_pe if (avg_pe and eps > 0) else 0
+        col_p1, col_p2 = st.columns([1, 2])
         
-        # B. Peter Lynch (Fair Value = Growth * EPS)
-        # Lynch decía que un PER justo es igual a su tasa de crecimiento (PEG = 1)
-        val_lynch = growth_rate * eps if (eps > 0) else 0
-        
-        # C. Fórmula de Graham (Raíz de 22.5 * EPS * BookValue)
-        val_graham = 0
-        if eps > 0 and bvps > 0:
-            val_graham = (22.5 * eps * bvps) ** 0.5
-
-        # Mostrar Resultados
-        c1, c2, c3 = st.columns(3)
-        
-        with c1:
-            st.markdown("#### 1. Histórica (PER)")
-            if val_pe > 0:
-                st.plotly_chart(draw_gauge(price, val_pe, f"Obj: ${val_pe:.2f}"), use_container_width=True)
-                st.caption(f"Basado en PER medio de {avg_pe:.1f}x")
-            else:
-                st.warning("Datos insuficientes")
-
-        with c2:
-            st.markdown("#### 2. Crecimiento (Lynch)")
-            if val_lynch > 0:
-                st.plotly_chart(draw_gauge(price, val_lynch, f"Obj: ${val_lynch:.2f}"), use_container_width=True)
-                st.caption(f"Asume que PER Justo = Crecimiento ({growth_rate}x)")
-            else:
-                st.warning("Requiere EPS positivo")
-
-        with c3:
-            st.markdown("#### 3. Valor (Graham)")
-            if val_graham > 0:
-                st.plotly_chart(draw_gauge(price, val_graham, f"Obj: ${val_graham:.2f}"), use_container_width=True)
-                st.caption("Fórmula clásica: √(22.5 × EPS × BVPS)")
-            else:
-                st.warning("Requiere beneficios y valor contable positivos")
-
-        # Tabla Resumen
-        st.markdown("---")
-        models_df = pd.DataFrame({
-            'Modelo': ['Media Histórica', 'Peter Lynch (Crecimiento)', 'Benjamin Graham (Activos)'],
-            'Precio Objetivo': [val_pe, val_lynch, val_graham],
-            'Margen Seguridad': [
-                f"{((val_pe-price)/price)*100:.1f}%" if val_pe else "-",
-                f"{((val_lynch-price)/price)*100:.1f}%" if val_lynch else "-",
-                f"{((val_graham-price)/price)*100:.1f}%" if val_graham else "-"
-            ]
-        })
-        st.table(models_df)
-
-    # TAB 2: DETALLE CRECIMIENTO
-    with tab2:
-        st.subheader("Análisis de Proyección a 5 Años")
-        
-        col_input, col_graph = st.columns([1, 2])
-        with col_input:
-            st.write(f"Usando un crecimiento anual del **{growth_rate}%** y retornando a un PER de **{avg_pe if avg_pe else 15:.1f}x**:")
+        with col_p1:
+            st.markdown("#### 1. Configura tu Escenario")
+            g_rate = growth_input
+            # EL USUARIO ELIGE EL PER DE SALIDA (Por defecto sugerimos la media histórica)
+            exit_pe = st.number_input("PER de Salida (Año 5)", value=float(round(pe_hist_mean, 1)), step=0.5, 
+                                     help="¿A qué múltiplo crees que cotizará la acción dentro de 5 años? Por defecto es su media histórica.")
             
-            future_eps = eps * ((1 + growth_rate/100) ** 5)
-            future_price = future_eps * (avg_pe if avg_pe else 15)
-            cagr = ((future_price/price)**(1/5) - 1) * 100
+            st.markdown("---")
             
-            st.info(f"EPS en 2029: **${future_eps:.2f}**")
-            st.success(f"Precio Objetivo 2029: **${future_price:.2f}**")
-            st.metric("Retorno Anual Esperado (CAGR)", f"{cagr:.2f}%")
-
-        with col_graph:
-            # Gráfico de linea proyectada
+            # Cálculos
+            future_eps = eps * ((1 + g_rate/100) ** 5)
+            future_price = future_eps * exit_pe
+            total_return = (future_price / price) - 1
+            cagr = ((future_price / price) ** (1/5) - 1) * 100
+            
+            st.write("Resultados:")
+            st.metric("EPS Estimado (Año 5)", f"${future_eps:.2f}")
+            st.metric("Precio Objetivo (Año 5)", f"${future_price:.2f}")
+            
+        with col_p2:
+            st.markdown("#### 2. Análisis de Retorno")
+            
+            color_cagr = "green" if cagr > 10 else "orange" if cagr > 0 else "red"
+            st.markdown(f"""
+            <div style="text-align:center; padding: 20px; border: 2px solid {color_cagr}; border-radius: 10px; background-color: #fafafa;">
+                <h3 style="margin:0; color: #555;">Retorno Anual Compuesto (CAGR)</h3>
+                <h1 style="font-size: 60px; color: {color_cagr}; margin: 10px;">{cagr:.2f}%</h1>
+                <p>Si compras a <b>${price}</b> y vendes a <b>${future_price:.2f}</b> en 5 años.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Gráfico de proyección
             years = list(range(datetime.now().year, datetime.now().year + 6))
-            eps_proj = [eps * ((1 + growth_rate/100) ** i) for i in range(6)]
+            prices_proj = [price * ((1 + cagr/100) ** i) for i in range(6)]
             
             fig_proj = go.Figure()
-            fig_proj.add_trace(go.Scatter(x=years, y=eps_proj, mode='lines+markers', name='EPS Proyectado', line=dict(color='green', width=3)))
-            fig_proj.update_layout(title="Crecimiento de Beneficios Estimado", xaxis_title="Año", yaxis_title="EPS ($)")
+            fig_proj.add_trace(go.Scatter(x=years, y=prices_proj, mode='lines+markers', name='Proyección Precio', line=dict(color='#2980b9', width=4)))
+            fig_proj.add_trace(go.Scatter(x=[years[-1]], y=[future_price], mode='markers+text', text=[f"${future_price:.0f}"], textposition="top center", marker=dict(size=12, color='green'), name='Target'))
+            fig_proj.update_layout(title="Trayectoria del Precio Teórico", height=300, showlegend=False)
             st.plotly_chart(fig_proj, use_container_width=True)
-            
-            if scraped_data is not None:
-                st.write("📊 **Datos extraídos de ValueInvesting.io:**")
-                st.dataframe(scraped_data)
 
-    # TAB 3: DIVIDENDOS
-    with tab3:
-        st.subheader("Yield Theory (Reversión a la Media)")
-        curr_yield = info.get('dividendYield', 0)
-        avg_yield = info.get('fiveYearAvgDividendYield', 0)
+    # TAB 2: DIVIDENDOS (GERALDINE WEISS)
+    with tab_div:
+        st.subheader("Teoría de la Rentabilidad por Dividendo (Geraldine Weiss)")
+        st.markdown("""
+        > *Geraldine Weiss ("La Dama de los Dividendos") sugiere que las acciones "Blue Chip" oscilan entre extremos de rentabilidad. 
+        > Cuando la rentabilidad (Yield) es históricamente alta, la acción está barata. Cuando es baja, está cara.*
+        """)
         
-        if curr_yield and avg_yield:
-            # Normalizar (a veces viene en % a veces en decimal)
-            if avg_yield > 1: avg_yield /= 100
+        if div_yield and avg_div_5y and avg_div_5y > 0:
+            div_rate = info.get('dividendRate', 0)
             
-            rate = info.get('dividendRate', 0)
-            fair_div = rate / avg_yield if avg_yield > 0 else 0
+            # Valor Justo = Dividendo Actual / Yield Medio Histórico
+            fair_value_weiss = div_rate / avg_div_5y
+            margin_weiss = ((fair_value_weiss - price) / price) * 100
             
             c1, c2 = st.columns(2)
-            c1.metric("Rentabilidad Actual", f"{curr_yield*100:.2f}%")
-            c1.metric("Rentabilidad Media (5y)", f"{avg_yield*100:.2f}%")
             
-            c2.metric("Precio Objetivo (Dividendos)", f"${fair_div:.2f}", delta=f"{((fair_div-price)/price)*100:.1f}%")
-            st.plotly_chart(draw_gauge(price, fair_div, "Valoración por Dividendos"), use_container_width=True)
+            with c1:
+                st.markdown("#### Datos de Entrada")
+                st.write(f"**Dividendo Anual:** ${div_rate}")
+                st.write(f"**Yield Actual:** {div_yield*100:.2f}%")
+                st.write(f"**Yield Medio (5-10 años):** {avg_div_5y*100:.2f}%")
+                
+                if div_yield > avg_div_5y:
+                    st.success(f"✅ OPORTUNIDAD: El dividendo actual ({div_yield*100:.2f}%) es superior a su media histórica.")
+                else:
+                    st.warning(f"⚠️ PRECAUCIÓN: El dividendo actual ({div_yield*100:.2f}%) es inferior a su media histórica.")
+            
+            with c2:
+                st.markdown("#### Valoración Weiss")
+                st.metric("Precio Justo (Teórico)", f"${fair_value_weiss:.2f}", delta=f"{margin_weiss:.1f}% Margen")
+                render_gauge(price, fair_value_weiss, "Precio vs Valor Justo (Div)")
+                
         else:
-            st.warning("Esta empresa no paga dividendos o faltan datos históricos.")
+            st.warning("Esta empresa no paga dividendos suficientes o no tiene historial estable para aplicar el método Weiss.")
 
-    # TAB 4: GRAHAM
-    with tab4:
-        st.markdown("""
-        > *"El inversor inteligente es un realista que vende a optimistas y compra a pesimistas."* - Benjamin Graham
-        """)
-        st.write(f"El Número de Graham mide el valor fundamental basándose en ganancias y activos tangibles.")
+    # TAB 3: OTROS MODELOS
+    with tab_val:
+        st.subheader("Otros Modelos de Referencia")
         
-        col_g1, col_g2 = st.columns(2)
-        col_g1.metric("Valor en Libros (BVPS)", f"${bvps}")
-        col_g1.metric("EPS", f"${eps}")
+        # 1. Modelo Graham (Revisión Clásica)
+        bvps = info.get('bookValue', 0)
+        val_graham = (22.5 * eps * bvps)**0.5 if (eps>0 and bvps>0) else 0
         
-        col_g2.metric("Número de Graham", f"${val_graham:.2f}", delta=f"{((val_graham-price)/price)*100:.1f}% Margen")
+        # 2. Peter Lynch Fair Value (PEG = 1 Simple)
+        # Nota: Lynch dice que un PER justo = Tasa de Crecimiento.
+        # Si crece al 15%, debería valer PER 15.
+        lynch_fair_pe = growth_input 
+        val_lynch = eps * lynch_fair_pe
         
-        st.info("Nota: Este modelo es muy conservador y funciona mejor para empresas industriales/financieras estables, no tecnológicas de alto crecimiento.")
+        c_m1, c_m2 = st.columns(2)
+        
+        with c_m1:
+            st.markdown("#### Fórmula de Benjamin Graham")
+            st.caption("√(22.5 × EPS × Valor en Libros)")
+            if val_graham > 0:
+                st.metric("Valor Graham", f"${val_graham:.2f}", delta=f"{((val_graham-price)/price)*100:.1f}%")
+                render_gauge(price, val_graham, "Graham")
+            else:
+                st.write("No aplicable (EPS o BVPS negativos)")
+                
+        with c_m2:
+            st.markdown("#### Valor Justo Instantáneo (Peter Lynch)")
+            st.caption(f"Asume PER Justo = Crecimiento ({growth_input}x)")
+            st.metric("Valor Lynch", f"${val_lynch:.2f}", delta=f"{((val_lynch-price)/price)*100:.1f}%")
+            render_gauge(price, val_lynch, "Lynch (PEG=1)")
 
-else:
-    st.info("👈 Introduce un Ticker en el menú de la izquierda para comenzar.")
+    # TAB 4: GRÁFICOS
+    with tab_data:
+        st.subheader("Evolución Histórica")
+        hist_price = stock.history(period="5y")
+        
+        # Gráfico de Velas
+        fig = go.Figure(data=[go.Candlestick(x=hist_price.index,
+                        open=hist_price['Open'],
+                        high=hist_price['High'],
+                        low=hist_price['Low'],
+                        close=hist_price['Close'])])
+        fig.update_layout(title=f"Cotización {ticker} (5 años)", height=500)
+        st.plotly_chart(fig, use_container_width=True)
