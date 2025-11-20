@@ -7,6 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import time
+import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Valuación Master", layout="wide", page_icon="💎")
@@ -73,19 +74,22 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. MOTORES DE CÁLCULO ROBUSTO ---
+# --- 1. SCRAPING MEJORADO DE FINVIZ ---
 
 @st.cache_data(ttl=3600)
 def get_finviz_growth(ticker):
-    """Scraping mejorado de Finviz con headers completos."""
-    ticker_clean = ticker.replace('.', '-')
+    """
+    Scraping DIRECTO de Finviz para EPS next 5Y.
+    Métodos múltiples para máxima compatibilidad.
+    """
+    ticker_clean = ticker.replace('.', '-').upper()
     url = f"https://finviz.com/quote.ashx?t={ticker_clean}"
     
-    # Headers mejorados para evitar bloqueos
+    # Headers realistas para evitar bloqueos
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br',
         'DNT': '1',
         'Connection': 'keep-alive',
@@ -93,63 +97,95 @@ def get_finviz_growth(ticker):
         'Sec-Fetch-Dest': 'document',
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'none',
-        'Cache-Control': 'max-age=0'
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
     }
     
     try:
         session = requests.Session()
-        time.sleep(0.5)  # Pausa cortés
-        r = session.get(url, headers=headers, timeout=10)
+        time.sleep(0.3)  # Pausa cortés
         
-        if r.status_code != 200:
+        response = session.get(url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            st.warning(f"⚠️ Finviz respondió con código {response.status_code}")
             return None
-            
-        soup = BeautifulSoup(r.content, 'html.parser')
         
-        # Buscar la tabla de datos
-        table = soup.find('table', class_='snapshot-table2')
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # MÉTODO 1: Buscar en la tabla snapshot-table2 (estructura actual de Finviz)
+        # Finviz usa una tabla con class "snapshot-table2"
+        table = soup.find('table', {'class': 'snapshot-table2'})
+        
         if table:
-            for row in table.find_all('tr'):
+            rows = table.find_all('tr')
+            for row in rows:
                 cells = row.find_all('td')
+                for i in range(0, len(cells)-1, 2):  # Las celdas van en pares (label, value)
+                    label = cells[i].get_text(strip=True)
+                    if 'EPS next 5Y' in label or 'EPS next Y' in label:
+                        value_text = cells[i+1].get_text(strip=True)
+                        # Limpiar y convertir
+                        value_clean = value_text.replace('%', '').replace(',', '').strip()
+                        try:
+                            growth_value = float(value_clean)
+                            if -100 < growth_value < 500:  # Validación razonable
+                                return growth_value
+                        except ValueError:
+                            continue
+        
+        # MÉTODO 2: Búsqueda por texto (backup)
+        all_text = soup.get_text()
+        pattern = r'EPS next 5Y[^\d]*?([-+]?\d+\.?\d*)%'
+        match = re.search(pattern, all_text)
+        if match:
+            try:
+                return float(match.group(1))
+            except:
+                pass
+        
+        # MÉTODO 3: Buscar en TODAS las tablas
+        all_tables = soup.find_all('table')
+        for table in all_tables:
+            text = table.get_text()
+            if 'EPS next 5Y' in text:
+                # Buscar el valor siguiente
+                cells = table.find_all('td')
                 for i, cell in enumerate(cells):
                     if 'EPS next 5Y' in cell.get_text():
                         if i + 1 < len(cells):
-                            val_text = cells[i + 1].get_text().strip()
+                            val_text = cells[i+1].get_text(strip=True)
                             val_clean = val_text.replace('%', '').replace(',', '').strip()
                             try:
-                                return float(val_clean)
+                                val = float(val_clean)
+                                if -100 < val < 500:
+                                    return val
                             except:
                                 pass
         
-        # Método alternativo
-        eps_next = soup.find(string="EPS next 5Y")
-        if eps_next:
-            val = eps_next.parent.find_next_sibling('td').text.replace('%', '').replace(',', '').strip()
-            try:
-                return float(val)
-            except:
-                pass
-                
-    except Exception as e:
-        st.warning(f"⚠️ No se pudo obtener crecimiento de Finviz: {e}")
+        st.info(f"ℹ️ No se encontró 'EPS next 5Y' en Finviz para {ticker}")
         return None
-    
-    return None
+        
+    except requests.exceptions.Timeout:
+        st.warning("⚠️ Timeout conectando a Finviz")
+        return None
+    except requests.exceptions.RequestException as e:
+        st.warning(f"⚠️ Error de conexión a Finviz: {e}")
+        return None
+    except Exception as e:
+        st.warning(f"⚠️ Error procesando Finviz: {e}")
+        return None
 
 @st.cache_data(ttl=3600)
 def get_stockanalysis_growth(ticker):
-    """Scraping de StockAnalysis.com como alternativa."""
+    """Backup: StockAnalysis.com"""
     ticker_clean = ticker.upper()
-    url = f"https://stockanalysis.com/stocks/{ticker_clean.lower()}/"
+    url = f"https://stockanalysis.com/stocks/{ticker_clean.lower()}/forecast/"
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://www.google.com/',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
     }
     
     try:
@@ -162,33 +198,30 @@ def get_stockanalysis_growth(ticker):
             
         soup = BeautifulSoup(r.content, 'html.parser')
         
-        # Buscar en las tablas de forecast/estimates
-        tables = soup.find_all('table')
-        for table in tables:
-            rows = table.find_all('tr')
-            for row in rows:
-                if 'EPS Growth' in row.get_text() or 'Revenue Growth' in row.get_text():
-                    cells = row.find_all('td')
-                    if cells:
-                        for cell in cells:
-                            text = cell.get_text().strip()
-                            if '%' in text:
-                                try:
-                                    val = float(text.replace('%', '').replace(',', '').strip())
-                                    if 0 < val < 100:  # Validación razonable
-                                        return val
-                                except:
-                                    pass
+        # Buscar patrones de crecimiento
+        text = soup.get_text()
+        pattern = r'(\d+\.?\d*)%\s*(?:annual|avg|average|growth)'
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        
+        if matches:
+            for match in matches:
+                try:
+                    val = float(match)
+                    if 0 < val < 100:
+                        return val
+                except:
+                    pass
+                    
     except Exception as e:
-        return None
+        pass
     
     return None
 
 @st.cache_data(ttl=3600)
 def calculate_robust_ratios(ticker, years=5):
     """
-    MÉTODO MATEMÁTICO INFALIBLE:
-    Descarga precios y fundamentales, los alinea y calcula la media.
+    CÁLCULO INTERNO: Descarga datos históricos de Yahoo Finance
+    y calcula la media de los ratios en el periodo especificado.
     """
     try:
         stock = yf.Ticker(ticker)
@@ -252,7 +285,6 @@ def calculate_robust_ratios(ticker, years=5):
             liab = bal.get('Total Liabilities Net Minority Interest')
             
             if assets is not None and liab is not None and shares is not None:
-                # Alinear shares con balance
                 metrics_fin['BVPS'] = (assets - liab) / shares
                 
             # EV/EBITDA
@@ -315,7 +347,7 @@ def calculate_robust_ratios(ticker, years=5):
 
 @st.cache_data(ttl=3600)
 def get_full_analysis(ticker, years_hist=10):
-    """Análisis completo con manejo robusto de errores."""
+    """Análisis completo con fuentes múltiples."""
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
@@ -344,24 +376,23 @@ def get_full_analysis(ticker, years_hist=10):
         raw_avg = info.get('fiveYearAvgDividendYield', 0)
         avg_5y_yield = (raw_avg / 100 if raw_avg and raw_avg > 0.5 else raw_avg) if raw_avg else 0
         
-        # HISTÓRICOS
+        # HISTÓRICOS (Calculados internamente)
         hist_ratios = calculate_robust_ratios(ticker, years_hist)
         
-        # Crecimiento - Intentar múltiples fuentes
+        # CRECIMIENTO: Prioridad a Finviz
         finviz_g = get_finviz_growth(ticker)
         
+        # Si Finviz falla, intentar StockAnalysis
         if finviz_g is None:
             finviz_g = get_stockanalysis_growth(ticker)
         
         # PER Medio
         pe_mean = hist_ratios.get('PER')
         if pe_mean is None or pd.isna(pe_mean):
-            # Fallback al PER actual de yfinance
             pe_mean = info.get('trailingPE')
             if pe_mean is None or pd.isna(pe_mean):
-                pe_mean = 15.0  # Fallback final
+                pe_mean = 15.0
         
-        # Asegurar tipo float
         pe_mean = float(pe_mean)
 
         return {
@@ -374,7 +405,7 @@ def get_full_analysis(ticker, years_hist=10):
                 'rate': float(div_rate)
             },
             'hist_ratios': hist_ratios, 
-            'finviz_growth': finviz_g  # ← CORREGIDO: era "finviz_growth" undefined
+            'finviz_growth': finviz_g
         }
         
     except Exception as e:
@@ -395,7 +426,7 @@ def card_html(label, value, sub_value=None, color_class="neu"):
     """, unsafe_allow_html=True)
 
 def verdict_box(price, fair_value):
-    """Caja de veredicto con colores."""
+    """Caja de veredicto."""
     margin = ((fair_value - price) / price) * 100
     if margin > 15:
         css = "v-undervalued"
@@ -431,6 +462,9 @@ with st.sidebar:
     ticker = st.text_input("Ticker", value="GOOGL").upper().strip()
     st.divider()
     years_hist = st.slider("Años Media Histórica", 5, 10, 10)
+    
+    # Opción de debug
+    debug_mode = st.checkbox("🔍 Modo Debug (ver detalles scraping)", value=False)
 
 if ticker:
     with st.spinner(f'⚙️ Procesando datos financieros para {ticker}...'):
@@ -453,9 +487,11 @@ if ticker:
     with st.sidebar:
         st.subheader("⚙️ Proyección")
         growth_input = st.number_input("Crecimiento (5y) %", value=float(default_g), step=0.5)
+        
         if finviz_g:
-            st.success(f"✅ Estimación externa: {finviz_g}%")
+            st.success(f"✅ Finviz EPS next 5Y: **{finviz_g}%**")
         else:
+            st.warning("⚠️ No se pudo obtener de Finviz")
             st.info("ℹ️ Usando estimación manual")
 
     # EPS y Fair Value
@@ -601,6 +637,8 @@ if ticker:
         st.markdown("<br>", unsafe_allow_html=True)
         st.subheader("🔎 Análisis Fundamental vs Histórico")
         
+        st.info("ℹ️ **Actual** = Yahoo Finance (dato directo) | **Media Histórica** = Cálculo interno con datos históricos de YFinance")
+        
         ratios_to_show = {
             'PER (P/E)': {
                 'curr': info.get('trailingPE'), 
@@ -645,6 +683,6 @@ if ticker:
     st.markdown("""
     <div style='text-align:center; color:#7f8c8d; font-size:16px; padding:20px'>
         💡 Esta herramienta es solo educativa. No constituye asesoramiento financiero.<br>
-        Datos obtenidos de Yahoo Finance, Finviz y cálculos propios.
+        📊 <b>Fuentes:</b> Yahoo Finance (ratios actuales y históricos) • Finviz (crecimiento estimado)
     </div>
     """, unsafe_allow_html=True)
