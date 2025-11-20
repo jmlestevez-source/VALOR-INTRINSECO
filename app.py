@@ -10,139 +10,151 @@ from datetime import datetime, timedelta
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Valuación Pro Ultra", layout="wide", page_icon="💎")
 
-# --- ESTILOS CSS MODERNOS (BIG FONTS & CARDS) ---
+# --- ESTILOS CSS (BIG FONTS & HIGH CONTRAST) ---
 st.markdown("""
     <style>
-    /* Fuente Global más grande */
+    /* FUENTES GLOBALES AUMENTADAS */
     html, body, [class*="css"] {
-        font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        font-size: 18px;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
     }
     
-    /* Tarjetas de Métricas */
+    /* TARJETAS MÉTRICAS (MUCHO MÁS GRANDES) */
     .metric-card {
         background-color: #ffffff;
-        border-radius: 12px;
-        padding: 20px;
+        border-radius: 15px;
+        padding: 25px 15px;
         text-align: center;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        border: 1px solid #f0f0f0;
-        transition: transform 0.2s;
+        box-shadow: 0 6px 15px rgba(0,0,0,0.08);
+        border: 1px solid #ececec;
+        height: 100%;
     }
-    .metric-card:hover { transform: translateY(-2px); }
     
     .metric-label { 
-        font-size: 14px; 
-        color: #888; 
+        font-size: 18px !important; 
+        color: #666; 
         text-transform: uppercase; 
-        font-weight: 600;
-        letter-spacing: 1px;
-        margin-bottom: 8px;
+        font-weight: 700;
+        letter-spacing: 1.2px;
+        margin-bottom: 10px;
     }
-    .metric-value { 
-        font-size: 32px; 
-        font-weight: 800; 
-        color: #1a1a1a; 
-    }
-    .metric-sub { font-size: 15px; font-weight: 500; margin-top: 8px; }
     
-    /* Colores Semánticos */
-    .pos { color: #00b894; } /* Verde Menta */
-    .neg { color: #d63031; } /* Rojo Intenso */
-    .neu { color: #636e72; } /* Gris */
-
-    /* CAJA DE VEREDICTO (NUEVO DISEÑO) */
+    .metric-value { 
+        font-size: 48px !important; 
+        font-weight: 900; 
+        color: #2c3e50; 
+        line-height: 1.1;
+    }
+    
+    .metric-sub { 
+        font-size: 20px !important; 
+        font-weight: 500; 
+        margin-top: 12px; 
+    }
+    
+    /* CAJA DE VEREDICTO */
     .verdict-box {
-        padding: 25px;
-        border-radius: 15px;
+        padding: 30px;
+        border-radius: 20px;
         text-align: center;
         color: white;
-        margin-bottom: 25px;
-        box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+        margin-bottom: 35px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.15);
     }
-    .v-undervalued { background: linear-gradient(135deg, #00b894, #00cec9); }
+    .v-undervalued { background: linear-gradient(135deg, #00b894, #0984e3); }
     .v-fair { background: linear-gradient(135deg, #fdcb6e, #e17055); }
     .v-overvalued { background: linear-gradient(135deg, #ff7675, #d63031); }
     
-    .v-title { font-size: 24px; font-weight: bold; opacity: 0.9; }
-    .v-main { font-size: 42px; font-weight: 900; margin: 10px 0; }
-    .v-desc { font-size: 18px; opacity: 0.95; }
-
-    /* Tablas */
-    .stTable { font-size: 16px !important; }
+    .v-main { font-size: 52px; font-weight: 900; margin: 10px 0; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+    .v-desc { font-size: 22px; font-weight: 500; opacity: 0.95; }
+    
+    /* PESTAÑAS Y TABLAS */
+    .stTabs [data-baseweb="tab"] {
+        font-size: 20px !important;
+        font-weight: 600;
+        padding: 15px 25px;
+    }
+    .stTable { font-size: 18px !important; }
+    div[data-testid="stMetricValue"] { font-size: 36px !important; }
+    
+    /* CLASES DE COLOR */
+    .pos { color: #00b894; } 
+    .neg { color: #d63031; }
+    .neu { color: #636e72; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. MOTORES DE DATOS (SCRAPING MEJORADO) ---
+# --- 1. MOTORES DE DATOS (SCRAPING CORREGIDO) ---
 
 @st.cache_data(ttl=3600)
 def get_finviz_growth_soup(ticker):
-    """Scraping robusto usando BeautifulSoup buscando la etiqueta exacta."""
-    url = f"https://finviz.com/quote.ashx?t={ticker}"
+    # Finviz usa tickers con guión en vez de punto (BRK-B)
+    ticker_clean = ticker.replace('.', '-')
+    url = f"https://finviz.com/quote.ashx?t={ticker_clean}"
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     }
-    
     try:
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
-            # Finviz pone el label en un <td> y el valor en el siguiente <td>
-            # Buscamos el texto "EPS next 5Y"
-            target_label = soup.find(string="EPS next 5Y")
-            if target_label:
-                # Subimos al padre <td> y buscamos el siguiente hermano <td>
-                # Estructura: <td>EPS next 5Y</td> <td class="snapshot-td2"><b>14.50%</b></td>
-                label_td = target_label.parent
-                value_td = label_td.find_next_sibling('td')
-                
-                if value_td and value_td.text:
-                    clean_text = value_td.text.replace('%', '').strip()
-                    if clean_text != '-':
-                        return float(clean_text)
-    except Exception as e:
-        print(f"Finviz Error: {e}")
-        return None
+            target = soup.find(string="EPS next 5Y")
+            if target:
+                val_td = target.parent.find_next_sibling('td')
+                if val_td and val_td.text:
+                    return float(val_td.text.replace('%', '').strip())
+    except: return None
     return None
 
 @st.cache_data(ttl=3600)
 def get_stockanalysis_ratios(ticker):
-    """Scraping mejorado con headers de navegador real."""
-    url = f"https://stockanalysis.com/stocks/{ticker.lower()}/financials/ratios/"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Referer': 'https://stockanalysis.com/'
-    }
+    """
+    Scraper V2: Usa Session para mantener cookies y headers completos.
+    Maneja redirecciones y tickers especiales.
+    """
+    # StockAnalysis usa guiones (BRK-B) y minúsculas
+    ticker_clean = ticker.lower().replace('.', '-')
+    url = f"https://stockanalysis.com/stocks/{ticker_clean}/financials/ratios/"
+    
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://stockanalysis.com/',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+    })
     
     ratios_data = {}
     try:
-        response = requests.get(url, headers=headers, timeout=4)
+        response = session.get(url, timeout=6)
         if response.status_code == 200:
-            # Pandas read_html a veces falla si no encuentra tablas perfectas
-            # Usamos match para asegurar que pilla la tabla correcta
-            dfs = pd.read_html(response.text, match="Year") 
+            # Usamos read_html con BeautifulSoup backend implícito
+            dfs = pd.read_html(response.text)
             if dfs:
-                df = dfs[0]
-                # Mapeo de nombres
+                df = dfs[0] # La primera tabla suele ser la buena
+                
+                # Mapeo
                 metrics_map = {
-                    'PE Ratio': 'PER', 
-                    'PS Ratio': 'Price/Sales', 
-                    'PB Ratio': 'Price/Book', 
+                    'PE Ratio': 'PER',
+                    'PS Ratio': 'Price/Sales',
+                    'PB Ratio': 'Price/Book',
                     'EV / EBITDA': 'EV/EBITDA'
                 }
                 
                 for index, row in df.iterrows():
-                    metric_raw = str(row[0])
+                    # Convertimos a string por seguridad
+                    metric_raw = str(row.iloc[0])
+                    
                     for key, clean_name in metrics_map.items():
                         if key in metric_raw:
                             values = []
-                            # Las columnas suelen ser años (2023, 2022...)
-                            # Saltamos la col 0 (nombre) e intentamos convertir el resto
-                            for val in row[1:]:
+                            # Iteramos desde la columna 1 en adelante (los años)
+                            for val in row.iloc[1:]:
                                 try:
-                                    # Limpiar comas y símbolos
+                                    # Limpiar basura
                                     v_str = str(val).replace(',', '').replace('%', '')
                                     v = float(v_str)
                                     values.append(v)
@@ -152,7 +164,7 @@ def get_stockanalysis_ratios(ticker):
                             if values:
                                 ratios_data[clean_name] = np.mean(values)
     except Exception as e:
-        print(f"StockAnalysis Error: {e}")
+        # print(f"Debug Error: {e}") # Descomentar solo para debug local
         pass
         
     return ratios_data
@@ -164,14 +176,15 @@ def get_full_analysis(ticker, years_hist=10):
     price = info.get('currentPrice', info.get('regularMarketPreviousClose'))
     if not price: return None
     
-    # Dividendos (Cálculo Manual Robusto)
+    # Dividendos
     div_rate = info.get('dividendRate', 0)
-    if div_rate and price > 0:
-        current_yield = div_rate / price
-    else:
-        raw_yield = info.get('dividendYield', 0)
-        # Si raw_yield > 0.5, es entero (5.5), dividir por 100
-        current_yield = raw_yield / 100 if (raw_yield and raw_yield > 0.5) else raw_yield
+    current_yield = (div_rate / price) if (div_rate and price > 0) else 0
+    
+    # Fallback yield
+    if current_yield == 0:
+        raw_y = info.get('dividendYield', 0)
+        if raw_y and raw_y > 0.5: current_yield = raw_y / 100
+        else: current_yield = raw_y or 0
 
     raw_avg = info.get('fiveYearAvgDividendYield', 0)
     avg_5y_yield = raw_avg / 100 if raw_avg is not None else 0
@@ -208,7 +221,6 @@ def get_full_analysis(ticker, years_hist=10):
             if pe_values: pe_mean = np.mean(pe_values)
     except: pass 
 
-    # Datos Externos
     ext_ratios = get_stockanalysis_ratios(ticker)
     finviz_growth = get_finviz_growth_soup(ticker)
 
@@ -218,7 +230,7 @@ def get_full_analysis(ticker, years_hist=10):
         'ext_ratios': ext_ratios, 'finviz_growth': finviz_growth
     }
 
-# --- 2. COMPONENTES VISUALES HTML ---
+# --- 2. COMPONENTES VISUALES ---
 
 def card_html(label, value, sub_value=None, color_class="neu"):
     sub_html = f"<div class='metric-sub {color_class}'>{sub_value}</div>" if sub_value else ""
@@ -231,51 +243,37 @@ def card_html(label, value, sub_value=None, color_class="neu"):
     """, unsafe_allow_html=True)
 
 def verdict_box(price, fair_value):
-    """Genera la caja grande de veredicto."""
     margin = ((fair_value - price) / price) * 100
     
     if margin > 15:
-        # Infravalorada (Buena compra)
-        css_class = "v-undervalued"
-        title = "💎 OPORTUNIDAD DETECTADA"
-        main_text = "INFRAVALORADA"
-        emoji = "🚀"
-        desc = f"Cotiza con un descuento del {margin:.1f}% sobre su valor histórico."
+        css = "v-undervalued"; title = "💎 OPORTUNIDAD"; main = "INFRAVALORADA"; icon = "🚀"
+        desc = f"Descuento del {margin:.1f}% vs Histórico"
     elif margin < -15:
-        # Sobrevalorada
-        css_class = "v-overvalued"
-        title = "⚠️ PRECAUCIÓN"
-        main_text = "SOBREVALORADA"
-        emoji = "🔥"
-        desc = f"Cotiza con una prima del {abs(margin):.1f}% sobre su valor histórico."
+        css = "v-overvalued"; title = "⚠️ CUIDADO"; main = "SOBREVALORADA"; icon = "🛑"
+        desc = f"Prima del {abs(margin):.1f}% vs Histórico"
     else:
-        # Precio Justo
-        css_class = "v-fair"
-        title = "⚖️ MERCADO EFICIENTE"
-        main_text = "PRECIO JUSTO"
-        emoji = "✅"
-        desc = f"La cotización está alineada con sus fundamentales históricos."
+        css = "v-fair"; title = "⚖️ EQUILIBRIO"; main = "PRECIO JUSTO"; icon = "✅"
+        desc = f"Cotizando cerca de su media histórica"
 
     st.markdown(f"""
-    <div class="verdict-box {css_class}">
+    <div class="verdict-box {css}">
         <div class="v-title">{title}</div>
-        <div class="v-main">{emoji} {main_text}</div>
-        <div class="v-desc">{desc} (Fair Value: ${fair_value:.2f})</div>
+        <div class="v-main">{icon} {main}</div>
+        <div class="v-desc">{desc} (Fair: ${fair_value:.2f})</div>
     </div>
     """, unsafe_allow_html=True)
 
-# --- 3. INTERFAZ PRINCIPAL ---
+# --- 3. MAIN ---
 
 with st.sidebar:
     st.header("🎛️ Configuración")
     ticker = st.text_input("Ticker", value="GOOGL").upper()
     st.divider()
     years_hist = st.slider("Años Media Histórica", 5, 10, 10)
-    st.caption("v3.0 Ultra - BS4 Scraping")
+    st.caption("v3.5 Big Font Edition")
 
 if ticker:
-    # Spinner de carga para dar sensación de proceso
-    with st.spinner(f'🔍 Analizando {ticker} a fondo...'):
+    with st.spinner(f'⏳ Conectando con StockAnalysis & Finviz para {ticker}...'):
         data = get_full_analysis(ticker, years_hist)
     
     if not data:
@@ -289,36 +287,32 @@ if ticker:
     ext_ratios = data['ext_ratios']
     finviz_g = data['finviz_growth']
     
-    # Gestión de Crecimiento
-    default_growth = finviz_g if finviz_g else 10.0
-    
+    # Crecimiento
+    default_g = finviz_g if finviz_g else 10.0
     with st.sidebar:
-        st.subheader("⚙️ Proyección Futura")
-        growth_input = st.number_input("Crecimiento Estimado (5y) %", value=float(default_growth), step=0.5)
-        if finviz_g:
-            st.success(f"✅ Finviz: {finviz_g}% detectado")
-        else:
-            st.warning("⚠️ Finviz no disponible (Usa manual)")
+        st.subheader("⚙️ Proyección")
+        growth_input = st.number_input("Crecimiento (5y) %", value=float(default_g), step=0.5)
+        if finviz_g: st.success(f"✅ Finviz: {finviz_g}%")
+        else: st.warning("⚠️ Manual (Finviz N/A)")
+        if ext_ratios: st.success(f"✅ StockAnalysis: Conectado")
+        else: st.warning("⚠️ StockAnalysis: Fallo conexión")
 
     eps = info.get('trailingEps', 0)
     fair_value = eps * pe_mean
     
-    # HEADER PRINCIPAL
+    # Header
     st.title(f"{info.get('shortName', ticker)}")
     st.markdown(f"### **{info.get('sector', '')}**  •  {info.get('industry', '')}")
-    
     st.markdown("---")
 
-    # 1. CAJA DE VEREDICTO (NUEVO)
+    # 1. VEREDICTO
     verdict_box(price, fair_value)
 
-    # 2. DASHBOARD DE MÉTRICAS (CARDS)
+    # 2. BIG CARDS
     c1, c2, c3, c4 = st.columns(4)
     with c1: card_html("Cotización", f"${price:.2f}")
-    with c2: 
-        card_html("Valor Razonable", f"${fair_value:.2f}", f"PER Medio: {pe_mean:.1f}x", "neu")
+    with c2: card_html("Valor Razonable", f"${fair_value:.2f}", f"PER Medio: {pe_mean:.1f}x", "neu")
     with c3:
-        # Analistas
         target = info.get('targetMeanPrice', 0)
         if target:
             pot = ((target - price)/price)*100
@@ -327,104 +321,70 @@ if ticker:
         else: card_html("Obj. Analistas", "N/A")
     with c4:
         curr, avg = divs['current'], divs['avg_5y']
-        val_curr = curr if curr else 0
-        val_avg = avg if avg else 0
-        col = "pos" if (val_curr > 0 and val_curr > val_avg) else "neu"
-        sub = f"Media 5y: {val_avg*100:.2f}%" if val_avg > 0 else "No aplica"
-        card_html("Div. Yield", f"{val_curr*100:.2f}%", sub, col)
+        v_c = curr if curr else 0
+        v_a = avg if avg else 0
+        col = "pos" if (v_c > 0 and v_c > v_a) else "neu"
+        sub = f"Media: {v_a*100:.2f}%" if v_a > 0 else "N/A"
+        card_html("Div. Yield", f"{v_c*100:.2f}%", sub, col)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 3. PESTAÑAS DETALLADAS
-    t1, t2, t3 = st.tabs(["🚀 PROYECCIÓN 2029", "💰 ANÁLISIS DIVIDENDOS", "📊 FUNDAMENTALES VS MEDIA"])
+    # 3. TABS
+    t1, t2, t3 = st.tabs(["🚀 PROYECCIÓN 2029", "💰 DIVIDENDOS", "📊 FUNDAMENTALES VS MEDIA"])
     
-    # TAB 1: PROYECCION
     with t1:
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            st.subheader("📝 Calculadora")
-            st.markdown(f"Partiendo de **EPS ${eps:.2f}** y creciendo al **{growth_input}%**")
-            
+        cc1, cc2 = st.columns([1, 2])
+        with cc1:
+            st.subheader("Calculadora")
+            st.markdown(f"<div style='font-size:20px'>EPS: <b>${eps:.2f}</b> | Crecimiento: <b>{growth_input}%</b></div>", unsafe_allow_html=True)
+            st.write("")
             exit_pe = st.number_input("PER de Salida Estimado", value=float(round(pe_mean, 1)))
-            
             f_eps = eps * ((1 + growth_input/100)**5)
             f_price = f_eps * exit_pe
             cagr = ((f_price/price)**(1/5)-1)*100
-            
             st.markdown("---")
-            st.metric("Precio Objetivo 2029", f"${f_price:.2f}")
-            
-            col_c = "#00b894" if cagr > 10 else "#2d3436"
-            st.markdown(f"<div style='font-size:20px'>Retorno Anual (CAGR): <b style='color:{col_c}; font-size:28px'>{cagr:.2f}%</b></div>", unsafe_allow_html=True)
-            
-        with col2:
+            st.markdown(f"<div style='font-size:24px'>Precio 2029: <b>${f_price:.2f}</b></div>", unsafe_allow_html=True)
+            c_col = "#00b894" if cagr > 10 else "#2d3436"
+            st.markdown(f"<div style='font-size:24px'>CAGR: <b style='color:{c_col}; font-size:36px'>{cagr:.2f}%</b></div>", unsafe_allow_html=True)
+        with cc2:
             yrs = list(range(datetime.now().year, datetime.now().year+6))
             vals = [price * ((1 + cagr/100)**i) for i in range(6)]
-            
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=yrs, y=vals, mode='lines+markers', 
-                line=dict(color='#0984e3', width=4),
-                marker=dict(size=10, color='#74b9ff')
-            ))
-            fig.update_layout(
-                title="Curva de Crecimiento del Precio",
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor='#dfe6e9')
-            )
+            fig = go.Figure(go.Scatter(x=yrs, y=vals, mode='lines+markers', line=dict(color='#0984e3', width=5), marker=dict(size=12)))
+            fig.update_layout(title="Curva de Valor", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(size=14))
             st.plotly_chart(fig, use_container_width=True)
 
-    # TAB 2: DIVIDENDOS
     with t2:
         if divs['rate'] and divs['avg_5y'] > 0:
-            fair_yield = divs['rate'] / divs['avg_5y']
-            marg = ((fair_yield - price)/price)*100
-            
-            col_d1, col_d2 = st.columns(2)
-            with col_d1:
-                st.info(f"ℹ️ Modelo de Geraldine Weiss (Yield Theory)")
-                st.write(f"Dividendo Anual: **${divs['rate']}**")
-                st.write(f"Rentabilidad Media Histórica: **{divs['avg_5y']*100:.2f}%**")
-                st.write("---")
-                st.metric("Valor Justo (Weiss)", f"${fair_yield:.2f}", delta=f"{marg:+.1f}%")
-            with col_d2:
-                fig = go.Figure(go.Bar(
-                    x=['Actual', 'Media 5y'], 
-                    y=[divs['current']*100, divs['avg_5y']*100], 
-                    marker_color=['#00b894','#b2bec3'],
-                    texttemplate='%{y:.2f}%', textposition='outside'
-                ))
-                fig.update_layout(title="Comparativa Rentabilidad (%)", height=300)
+            fair_yld = divs['rate'] / divs['avg_5y']
+            marg = ((fair_yld - price)/price)*100
+            cd1, cd2 = st.columns(2)
+            with cd1:
+                st.markdown(f"<div style='font-size:22px'>Dividendo Anual: <b>${divs['rate']}</b></div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='font-size:22px'>Media Histórica: <b>{divs['avg_5y']*100:.2f}%</b></div>", unsafe_allow_html=True)
+                st.markdown("---")
+                st.metric("Valor Justo (Weiss)", f"${fair_yld:.2f}", f"{marg:+.1f}%")
+            with cd2:
+                fig = go.Figure(go.Bar(x=['Actual', 'Media'], y=[divs['current']*100, divs['avg_5y']*100], marker_color=['#00b894','#b2bec3'], texttemplate='%{y:.2f}%'))
+                fig.update_layout(title="Rentabilidad (%)", font=dict(size=16))
                 st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning("Esta empresa no paga dividendos suficientes para este análisis.")
+        else: st.info("Datos de dividendos insuficientes.")
 
-    # TAB 3: RATIOS
     with t3:
-        st.subheader("🔎 Salud Financiera")
-        
-        ratios_to_show = {
+        st.subheader("Análisis de Ratios Históricos")
+        ratios = {
             'PER (P/E)': {'curr': info.get('trailingPE'), 'avg': ext_ratios.get('PER') or pe_mean},
             'Price/Sales': {'curr': info.get('priceToSalesTrailing12Months'), 'avg': ext_ratios.get('Price/Sales')},
             'Price/Book': {'curr': info.get('priceToBook'), 'avg': ext_ratios.get('Price/Book')},
             'EV/EBITDA': {'curr': info.get('enterpriseToEbitda'), 'avg': ext_ratios.get('EV/EBITDA')}
         }
-        
         rows = []
-        for name, vals in ratios_to_show.items():
-            curr = vals['curr']
-            avg = vals['avg']
-            if curr and avg:
-                # Lógica semántica: Si el ratio actual es MENOR a la media, suele ser bueno (Barato)
-                is_cheap = curr < avg
-                status = "🟢 Barato" if is_cheap else "🔴 Caro"
-                diff = ((curr - avg)/avg)*100
-                rows.append([name, f"{curr:.2f}", f"{avg:.2f}", f"{diff:+.1f}%", status])
-            elif curr:
-                rows.append([name, f"{curr:.2f}", "N/A", "-", "-"])
+        for n, v in ratios.items():
+            c, a = v['curr'], v['avg']
+            if c and a:
+                stat = "🟢 Barato" if c < a else "🔴 Caro"
+                diff = ((c-a)/a)*100
+                rows.append([n, f"{c:.2f}", f"{a:.2f}", f"{diff:+.1f}%", stat])
+            elif c: rows.append([n, f"{c:.2f}", "N/A", "-", "-"])
         
-        df_ratios = pd.DataFrame(rows, columns=['Ratio', 'Actual', 'Media Histórica', 'Desv.', 'Diagnóstico'])
-        st.table(df_ratios)
-        
-        if not ext_ratios:
-            st.info("💡 No se pudieron cargar los históricos de StockAnalysis.com. Usando datos calculados.")
+        st.table(pd.DataFrame(rows, columns=['Ratio', 'Actual', 'Media 5y', 'Desv.', 'Estado']))
+        if not ext_ratios: st.warning("⚠️ Medias calculadas con datos parciales (StockAnalysis Bloqueado)")
