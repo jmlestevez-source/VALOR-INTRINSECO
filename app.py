@@ -7,7 +7,7 @@ import requests
 from datetime import datetime, timedelta
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Valuación Pro 360", layout="wide", page_icon="📊")
+st.set_page_config(page_title="Valuación Pro Finviz", layout="wide", page_icon="🚀")
 
 # --- ESTILOS CSS ---
 st.markdown("""
@@ -26,85 +26,83 @@ st.markdown("""
     .pos { color: #27ae60; }
     .neg { color: #c0392b; }
     .neu { color: #7f8c8d; }
-    .ratio-table th { background-color: #f8f9fa !important; }
+    .source-badge { font-size: 12px; background-color: #e3f2fd; color: #1565c0; padding: 2px 6px; border-radius: 4px; border: 1px solid #bbdefb; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. MOTOR DE DATOS BLINDADO ---
+# --- 1. MOTORES DE DATOS ---
+
+@st.cache_data(ttl=3600)
+def get_finviz_growth(ticker):
+    """
+    Scrapea Finviz para obtener 'EPS next 5Y'.
+    Solo funciona bien para acciones listadas en USA.
+    """
+    url = f"https://finviz.com/quote.ashx?t={ticker}"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=4)
+        if response.status_code == 200:
+            # Pandas lee todas las tablas. La de Finviz suele ser una de las últimas y grandes.
+            dfs = pd.read_html(response.text)
+            for df in dfs:
+                # Convertimos todo a string para buscar fácil
+                # La tabla de Finviz tiene pares: Col1(Label) Col2(Value) Col3(Label) Col4(Value)...
+                # Aplanamos el dataframe para buscar la celda vecina
+                vals = df.to_numpy().flatten()
+                vals_list = list(vals)
+                
+                if 'EPS next 5Y' in vals_list:
+                    idx = vals_list.index('EPS next 5Y')
+                    if idx + 1 < len(vals_list):
+                        val_str = str(vals_list[idx+1])
+                        # Limpiamos el valor (ej: "14.50%")
+                        val_clean = val_str.replace('%', '').replace('-', '')
+                        if val_clean and val_clean != 'nan':
+                            return float(val_clean)
+    except:
+        return None
+    return None
 
 @st.cache_data(ttl=3600)
 def get_stockanalysis_ratios(ticker):
-    """
-    Intenta obtener la tabla de Ratios Financieros de stockanalysis.com
-    para comparar Current vs Average.
-    """
-    # StockAnalysis usa tickers limpios (sin .MC para USA, pero con sufijos para otros)
-    # Normalmente funciona bien para USA.
     url = f"https://stockanalysis.com/stocks/{ticker.lower()}/financials/ratios/"
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    
+    headers = {'User-Agent': 'Mozilla/5.0'}
     ratios_data = {}
-    
     try:
         response = requests.get(url, headers=headers, timeout=3)
         if response.status_code == 200:
             dfs = pd.read_html(response.text)
             if dfs:
                 df = dfs[0]
-                # Buscamos filas clave
-                metrics_map = {
-                    'PE Ratio': 'PER',
-                    'PS Ratio': 'Price/Sales',
-                    'PB Ratio': 'Price/Book',
-                    'EV / EBITDA': 'EV/EBITDA'
-                }
-                
-                # Iterar sobre el dataframe para extraer medias
-                # Estructura usual: Col 0 es nombre, Cols siguientes son años
+                metrics_map = {'PE Ratio': 'PER', 'PS Ratio': 'Price/Sales', 'PB Ratio': 'Price/Book', 'EV / EBITDA': 'EV/EBITDA'}
                 for index, row in df.iterrows():
                     metric_name = str(row[0])
                     for key, clean_name in metrics_map.items():
                         if key in metric_name:
-                            # Extraer valores numéricos de las columnas de años (excluyendo 'Current' si existe en col 1)
-                            # Normalmente StockAnalysis pone los años en las columnas.
                             values = []
                             for val in row[1:]:
-                                try:
-                                    v = float(str(val).replace(',', ''))
-                                    values.append(v)
-                                except:
-                                    pass
-                            
-                            if values:
-                                ratios_data[clean_name] = np.mean(values)
-    except:
-        pass # Si falla el scraping, devolvemos dict vacío y usamos fallback
-        
+                                try: values.append(float(str(val).replace(',', '')))
+                                except: pass
+                            if values: ratios_data[clean_name] = np.mean(values)
+    except: pass
     return ratios_data
 
 @st.cache_data(ttl=3600)
 def get_full_analysis(ticker, years_hist=10):
     stock = yf.Ticker(ticker)
     info = stock.info
-    
     price = info.get('currentPrice', info.get('regularMarketPreviousClose'))
     if not price: return None
     
-    # --- CORRECCIÓN DE DIVIDENDOS ---
+    # Dividendos
     div_rate = info.get('dividendRate', 0)
-    if div_rate and price > 0:
-        current_yield = div_rate / price
-    else:
-        raw_yield = info.get('dividendYield', 0)
-        current_yield = raw_yield / 100 if (raw_yield and raw_yield > 0.5) else raw_yield
-
-    raw_avg_5y = info.get('fiveYearAvgDividendYield', 0)
-    avg_5y_yield = raw_avg_5y / 100 if raw_avg_5y is not None else 0
+    current_yield = (div_rate / price) if (div_rate and price > 0) else (info.get('dividendYield', 0) / 100 if info.get('dividendYield', 0) > 0.5 else info.get('dividendYield', 0))
+    raw_avg = info.get('fiveYearAvgDividendYield', 0)
+    avg_5y_yield = raw_avg / 100 if raw_avg is not None else 0
         
-    # --- PER Histórico (Cálculo Propio) ---
+    # PER Histórico
     pe_mean = 15.0
     try:
         start_date = (datetime.now() - timedelta(days=years_hist*365 + 180)).strftime('%Y-%m-%d')
@@ -115,7 +113,6 @@ def get_full_analysis(ticker, years_hist=10):
             financials.index = pd.to_datetime(financials.index)
             if financials.index.tz is not None: financials.index = financials.index.tz_localize(None)
             financials = financials.sort_index()
-            
             pe_values = []
             for date, row in hist.iterrows():
                 past = financials[financials.index <= date]
@@ -125,54 +122,39 @@ def get_full_analysis(ticker, years_hist=10):
                     for k in ['Diluted EPS', 'Basic EPS', 'DilutedEPS']:
                         if k in latest and pd.notna(latest[k]):
                             eps_val = latest[k]; break
-                    
-                    # Fallback EPS manual
                     if pd.isna(eps_val):
                         try:
-                            ni = latest.get('Net Income Common Stockholders')
-                            shares = latest.get('Basic Average Shares')
-                            if ni and shares: eps_val = ni / shares
+                            if latest.get('Net Income Common Stockholders') and latest.get('Basic Average Shares'):
+                                eps_val = latest.get('Net Income Common Stockholders') / latest.get('Basic Average Shares')
                         except: pass
-                        
                     if eps_val and eps_val > 0:
                         pe = row['Close'] / eps_val
                         if 5 < pe < 200: pe_values.append(pe)
-            
             if pe_values: pe_mean = np.mean(pe_values)
     except: pass 
 
-    # --- RATIOS EXTERNOS (StockAnalysis) ---
-    external_ratios = get_stockanalysis_ratios(ticker)
+    # Datos Externos
+    ext_ratios = get_stockanalysis_ratios(ticker)
+    finviz_growth = get_finviz_growth(ticker) # Nuevo Scraper Finviz
 
     return {
-        'info': info,
-        'price': price,
-        'pe_mean': pe_mean,
+        'info': info, 'price': price, 'pe_mean': pe_mean,
         'div_data': {'current': current_yield, 'avg_5y': avg_5y_yield, 'rate': div_rate},
-        'external_ratios': external_ratios
+        'ext_ratios': ext_ratios, 'finviz_growth': finviz_growth
     }
 
 # --- 2. VISUALES ---
 
 def card_html(label, value, sub_value=None, color_class="neu"):
     sub_html = f"<div class='metric-sub {color_class}'>{sub_value}</div>" if sub_value else ""
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-label">{label}</div>
-        <div class="metric-value">{value}</div>
-        {sub_html}
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"<div class='metric-card'><div class='metric-label'>{label}</div><div class='metric-value'>{value}</div>{sub_html}</div>", unsafe_allow_html=True)
 
 def plot_valuation_bar(price, fair_value, analyst_target):
     fig = go.Figure()
     y_cat = ['']
-    
     fig.add_trace(go.Bar(y=y_cat, x=[price], name='Actual', orientation='h', marker_color='#e67e22', text=f"${price:.2f}", textposition='auto'))
     fig.add_trace(go.Bar(y=y_cat, x=[fair_value], name='Fair Value', orientation='h', marker_color='#27ae60', text=f"${fair_value:.2f}", textposition='auto'))
-    if analyst_target:
-        fig.add_trace(go.Bar(y=y_cat, x=[analyst_target], name='Analistas', orientation='h', marker_color='#2980b9', text=f"${analyst_target:.2f}", textposition='auto'))
-
+    if analyst_target: fig.add_trace(go.Bar(y=y_cat, x=[analyst_target], name='Analistas', orientation='h', marker_color='#2980b9', text=f"${analyst_target:.2f}", textposition='auto'))
     fig.update_layout(title="Comparativa de Valoración", barmode='group', height=200, margin=dict(l=0, r=0, t=30, b=0), legend=dict(orientation="h", y=1.1))
     st.plotly_chart(fig, use_container_width=True)
 
@@ -180,11 +162,21 @@ def plot_valuation_bar(price, fair_value, analyst_target):
 
 with st.sidebar:
     st.header("🎛️ Configuración")
-    ticker = st.text_input("Ticker", value="ZTS").upper()
+    ticker = st.text_input("Ticker", value="GOOGL").upper()
+    
+    # Lógica de Crecimiento Automático
+    finviz_val = None
+    if ticker:
+        # Hacemos una llamada ligera solo para el sidebar si es necesario, 
+        # o usamos el valor por defecto y luego se actualiza.
+        # Para eficiencia, lo cargamos luego, pero ponemos el input aquí.
+        pass
+    
     st.divider()
-    growth_input = st.number_input("Crecimiento Estimado (5y) %", value=10.0, step=0.5)
+    
+    # Placeholder para el input de crecimiento
+    # Si tenemos dato de Finviz (se carga abajo), lo usaremos. Si no, 10.
     years_hist = st.slider("Años Media Histórica", 5, 10, 10)
-    st.caption("Fuente: Yahoo Finance + StockAnalysis")
 
 if ticker:
     data = get_full_analysis(ticker, years_hist)
@@ -197,12 +189,24 @@ if ticker:
     price = data['price']
     pe_mean = data['pe_mean']
     divs = data['div_data']
-    ext_ratios = data['external_ratios']
+    ext_ratios = data['ext_ratios']
+    finviz_g = data['finviz_growth']
     
+    # Determinar crecimiento por defecto
+    default_growth = finviz_g if finviz_g else 10.0
+    growth_source = "Finviz (EPS next 5Y)" if finviz_g else "Estimación Manual"
+
+    # MOSTRAR INPUT CRECIMIENTO (Ahora que tenemos el dato)
+    with st.sidebar:
+        st.subheader("⚙️ Proyección")
+        growth_input = st.number_input("Crecimiento Estimado (5y) %", value=float(default_growth), step=0.5)
+        if finviz_g:
+            st.success(f"✅ Dato obtenido de Finviz: {finviz_g}%")
+        else:
+            st.info("ℹ️ Dato manual (Finviz no disponible)")
+
     eps = info.get('trailingEps', 0)
     analyst_target = info.get('targetMeanPrice', 0)
-    
-    # Cálculos principales
     fair_value = eps * pe_mean
     margin_safety = ((fair_value - price) / price) * 100
     
@@ -233,7 +237,6 @@ if ticker:
     st.markdown("---")
     plot_valuation_bar(price, fair_value, analyst_target)
     
-    # TABS
     t1, t2, t3 = st.tabs(["🚀 Proyección", "💰 Dividendos", "📊 Ratios vs Media"])
     
     # TAB 1: PROYECCION
@@ -241,6 +244,7 @@ if ticker:
         cc1, cc2 = st.columns([1,2])
         with cc1:
             st.subheader("Calculadora")
+            st.caption(f"Fuente Crecimiento: **{growth_source}**")
             exit_pe = st.number_input("PER Salida", value=float(round(pe_mean, 1)))
             f_eps = eps * ((1 + growth_input/100)**5)
             f_price = f_eps * exit_pe
@@ -273,36 +277,22 @@ if ticker:
                 st.plotly_chart(fig, use_container_width=True)
         else: st.info("No aplica modelo de dividendos.")
 
-    # TAB 3: RATIOS COMPARATIVOS
+    # TAB 3: RATIOS
     with t3:
         st.subheader("Análisis Fundamental: Actual vs Histórico")
-        
-        # Preparar datos
         ratios_to_show = {
             'PER (P/E)': {'curr': info.get('trailingPE'), 'avg': ext_ratios.get('PER') or pe_mean},
             'Price/Sales': {'curr': info.get('priceToSalesTrailing12Months'), 'avg': ext_ratios.get('Price/Sales')},
             'Price/Book': {'curr': info.get('priceToBook'), 'avg': ext_ratios.get('Price/Book')},
             'EV/EBITDA': {'curr': info.get('enterpriseToEbitda'), 'avg': ext_ratios.get('EV/EBITDA')}
         }
-        
-        # Construir filas
         rows = []
         for name, vals in ratios_to_show.items():
             curr = vals['curr']
             avg = vals['avg']
-            
             if curr and avg:
-                diff = ((curr - avg) / avg) * 100
-                # Para valoración, menor ratio usualmente es mejor (excepto a veces Book)
-                # Si Current < Avg -> Verde (Barato)
                 status = "🟢 Infravalorado" if curr < avg else "🔴 Sobrevalorado"
-                rows.append([name, f"{curr:.2f}", f"{avg:.2f}", f"{diff:+.1f}%", status])
-            elif curr:
-                rows.append([name, f"{curr:.2f}", "N/A", "-", "-"])
-                
-        df_ratios = pd.DataFrame(rows, columns=['Ratio', 'Actual', 'Media Histórica', 'Diferencia', 'Estado'])
-        st.table(df_ratios)
-        
-        if not ext_ratios:
-            st.warning("⚠️ No se pudieron obtener las medias de StockAnalysis.com automáticamente. Se muestran solo datos disponibles.")
-            st.markdown(f"[👉 Ver Ratios en StockAnalysis.com](https://stockanalysis.com/stocks/{ticker.lower()}/financials/ratios/)")
+                rows.append([name, f"{curr:.2f}", f"{avg:.2f}", status])
+            elif curr: rows.append([name, f"{curr:.2f}", "N/A", "-"])
+        st.table(pd.DataFrame(rows, columns=['Ratio', 'Actual', 'Media Histórica', 'Estado']))
+        if not ext_ratios: st.warning("Sin datos de StockAnalysis.com")
