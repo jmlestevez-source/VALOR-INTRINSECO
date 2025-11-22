@@ -12,7 +12,7 @@ import re
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Valuación Master", layout="wide", page_icon="💎")
 
-# --- ESTILOS CSS (BIG FONTS) ---
+# --- ESTILOS CSS (BIG FONTS + NUEVOS) ---
 st.markdown("""
     <style>
     /* FUENTES GLOBALES */
@@ -61,6 +61,20 @@ st.markdown("""
     .v-main { font-size: 64px; font-weight: 900; margin: 15px 0; text-shadow: 0 2px 5px rgba(0,0,0,0.2); }
     .v-desc { font-size: 28px; font-weight: 500; }
 
+    /* ALERTAS PERSONALIZADAS */
+    .alert-box {
+        padding: 20px;
+        border-radius: 12px;
+        margin: 15px 0;
+        border-left: 5px solid;
+        font-size: 18px;
+        line-height: 1.6;
+    }
+    .alert-danger { background-color: #fee; border-color: #e74c3c; color: #c0392b; }
+    .alert-warning { background-color: #fef9e7; border-color: #f39c12; color: #d68910; }
+    .alert-info { background-color: #eaf2f8; border-color: #3498db; color: #2471a3; }
+    .alert-success { background-color: #e8f8f5; border-color: #00b894; color: #00875a; }
+
     /* TABLAS GIGANTES */
     .stTable { font-size: 22px !important; }
     thead tr th { font-size: 24px !important; background-color: #f8f9fa !important; padding: 20px !important;}
@@ -71,17 +85,31 @@ st.markdown("""
         font-size: 26px !important;
         padding: 15px 30px !important;
     }
+    
+    /* ESCENARIOS */
+    .scenario-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 15px;
+        padding: 25px;
+        color: white;
+        margin: 10px 0;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+    }
+    .scenario-bull { background: linear-gradient(135deg, #00b894 0%, #00cec9 100%); }
+    .scenario-base { background: linear-gradient(135deg, #fdcb6e 0%, #e17055 100%); }
+    .scenario-bear { background: linear-gradient(135deg, #d63031 0%, #e84393 100%); }
+    
+    .scenario-title { font-size: 28px; font-weight: 800; margin-bottom: 10px; }
+    .scenario-price { font-size: 42px; font-weight: 900; margin: 10px 0; }
+    .scenario-cagr { font-size: 24px; font-weight: 600; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. SCRAPING DE FINVIZ (VERSIÓN QUE FUNCIONA) ---
+# --- 1. FUNCIONES DE SCRAPING (SIN CAMBIOS) ---
 
 @st.cache_data(ttl=3600)
 def get_finviz_growth(ticker):
-    """
-    Scraping robusto usando BeautifulSoup buscando la etiqueta exacta.
-    VERSIÓN PROBADA Y FUNCIONAL.
-    """
+    """Scraping robusto usando BeautifulSoup"""
     url = f"https://finviz.com/quote.ashx?t={ticker}"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -92,12 +120,8 @@ def get_finviz_growth(ticker):
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
-            # Finviz pone el label en un <td> y el valor en el siguiente <td>
-            # Buscamos el texto "EPS next 5Y"
             target_label = soup.find(string="EPS next 5Y")
             if target_label:
-                # Subimos al padre <td> y buscamos el siguiente hermano <td>
-                # Estructura: <td>EPS next 5Y</td> <td class="snapshot-td2"><b>14.50%</b></td>
                 label_td = target_label.parent
                 value_td = label_td.find_next_sibling('td')
                 
@@ -131,8 +155,6 @@ def get_stockanalysis_growth(ticker):
             return None
             
         soup = BeautifulSoup(r.content, 'html.parser')
-        
-        # Buscar patrones de crecimiento
         text = soup.get_text()
         pattern = r'(\d+\.?\d*)%\s*(?:annual|avg|average|growth)'
         matches = re.findall(pattern, text, re.IGNORECASE)
@@ -153,25 +175,18 @@ def get_stockanalysis_growth(ticker):
 
 @st.cache_data(ttl=3600)
 def calculate_robust_ratios(ticker, years=5):
-    """
-    CÁLCULO INTERNO: Descarga datos históricos de Yahoo Finance
-    y calcula la media de los ratios en el periodo especificado.
-    """
+    """Cálculo interno de ratios históricos"""
     try:
         stock = yf.Ticker(ticker)
-        
-        # 1. Historial de Precios (Mensual)
         start_date = (datetime.now() - timedelta(days=years*365 + 30)).strftime('%Y-%m-%d')
         hist = stock.history(start=start_date, interval="1mo")
         
         if hist.empty: 
             return {}
         
-        # Limpieza de zona horaria
         if hist.index.tz is not None: 
             hist.index = hist.index.tz_localize(None)
         
-        # 2. Fundamentales Anuales
         try:
             fin = stock.financials.T
             bal = stock.balance_sheet.T
@@ -181,7 +196,6 @@ def calculate_robust_ratios(ticker, years=5):
         if fin.empty: 
             return {}
         
-        # Limpieza de índices
         fin.index = pd.to_datetime(fin.index)
         if fin.index.tz is not None: 
             fin.index = fin.index.tz_localize(None)
@@ -191,20 +205,16 @@ def calculate_robust_ratios(ticker, years=5):
             if bal.index.tz is not None:
                 bal.index = bal.index.tz_localize(None)
         
-        # 3. Fusión de Datos
         df_merge = pd.DataFrame(index=hist.index)
         df_merge['Price'] = hist['Close']
         
-        # Extraemos métricas clave
         metrics_fin = pd.DataFrame(index=fin.index)
         
-        # EPS
         if 'Diluted EPS' in fin.columns:
             metrics_fin['EPS'] = fin['Diluted EPS']
         elif 'Basic EPS' in fin.columns:
             metrics_fin['EPS'] = fin['Basic EPS']
         
-        # Revenue Per Share
         rev = fin.get('Total Revenue')
         shares = fin.get('Basic Average Shares')
         if shares is None:
@@ -213,7 +223,6 @@ def calculate_robust_ratios(ticker, years=5):
         if rev is not None and shares is not None:
             metrics_fin['RPS'] = rev / shares
         
-        # Balance Sheet metrics
         if not bal.empty:
             assets = bal.get('Total Assets')
             liab = bal.get('Total Liabilities Net Minority Interest')
@@ -221,7 +230,6 @@ def calculate_robust_ratios(ticker, years=5):
             if assets is not None and liab is not None and shares is not None:
                 metrics_fin['BVPS'] = (assets - liab) / shares
                 
-            # EV/EBITDA
             debt = bal.get('Total Debt')
             cash = bal.get('Cash And Cash Equivalents')
             ebitda = fin.get('EBITDA')
@@ -234,38 +242,31 @@ def calculate_robust_ratios(ticker, years=5):
                 metrics_fin['EBITDA'] = ebitda
                 metrics_fin['Shares'] = shares
 
-        # Ordenar y fusionar
         metrics_fin = metrics_fin.sort_index()
         df_merge = df_merge.sort_index()
         
-        # Join y forward fill
         df_final = df_merge.join(metrics_fin, how='outer').ffill().dropna(subset=['Price'])
         
-        # 4. Cálculo de Ratios
         ratios = {}
         
-        # P/E Ratio
         if 'EPS' in df_final.columns:
             df_final['PE_Ratio'] = df_final['Price'] / df_final['EPS']
             valid_pe = df_final['PE_Ratio'][(df_final['PE_Ratio'] > 0) & (df_final['PE_Ratio'] < 200)]
             if not valid_pe.empty and not valid_pe.isna().all():
                 ratios['PER'] = float(valid_pe.mean())
 
-        # P/S Ratio
         if 'RPS' in df_final.columns:
             df_final['PS_Ratio'] = df_final['Price'] / df_final['RPS']
             valid_ps = df_final['PS_Ratio'][(df_final['PS_Ratio'] > 0) & (df_final['PS_Ratio'] < 50)]
             if not valid_ps.empty and not valid_ps.isna().all():
                 ratios['Price/Sales'] = float(valid_ps.mean())
 
-        # P/B Ratio
         if 'BVPS' in df_final.columns:
             df_final['PB_Ratio'] = df_final['Price'] / df_final['BVPS']
             valid_pb = df_final['PB_Ratio'][(df_final['PB_Ratio'] > 0) & (df_final['PB_Ratio'] < 50)]
             if not valid_pb.empty and not valid_pb.isna().all():
                 ratios['Price/Book'] = float(valid_pb.mean())
 
-        # EV/EBITDA
         if all(col in df_final.columns for col in ['EBITDA', 'Debt', 'Cash', 'Shares']):
             df_final['EV'] = (df_final['Price'] * df_final['Shares']) + df_final['Debt'] - df_final['Cash']
             df_final['EV_EBITDA'] = df_final['EV'] / df_final['EBITDA']
@@ -281,12 +282,11 @@ def calculate_robust_ratios(ticker, years=5):
 
 @st.cache_data(ttl=3600)
 def get_full_analysis(ticker, years_hist=10):
-    """Análisis completo con fuentes múltiples."""
+    """Análisis completo con fuentes múltiples"""
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
         
-        # Precio actual
         price = info.get('currentPrice')
         if not price or price == 0:
             price = info.get('regularMarketPrice')
@@ -295,7 +295,6 @@ def get_full_analysis(ticker, years_hist=10):
         if not price or price == 0:
             return None
         
-        # Dividendos
         div_rate = info.get('dividendRate', 0)
         if div_rate is None:
             div_rate = 0
@@ -310,17 +309,12 @@ def get_full_analysis(ticker, years_hist=10):
         raw_avg = info.get('fiveYearAvgDividendYield', 0)
         avg_5y_yield = (raw_avg / 100 if raw_avg and raw_avg > 0.5 else raw_avg) if raw_avg else 0
         
-        # HISTÓRICOS (Calculados internamente)
         hist_ratios = calculate_robust_ratios(ticker, years_hist)
         
-        # CRECIMIENTO: Prioridad a Finviz
         finviz_g = get_finviz_growth(ticker)
-        
-        # Si Finviz falla, intentar StockAnalysis
         if finviz_g is None:
             finviz_g = get_stockanalysis_growth(ticker)
         
-        # PER Medio
         pe_mean = hist_ratios.get('PER')
         if pe_mean is None or pd.isna(pe_mean):
             pe_mean = info.get('trailingPE')
@@ -339,17 +333,123 @@ def get_full_analysis(ticker, years_hist=10):
                 'rate': float(div_rate)
             },
             'hist_ratios': hist_ratios, 
-            'finviz_growth': finviz_g
+            'finviz_growth': finviz_g,
+            'stock': stock
         }
         
     except Exception as e:
         st.error(f"Error en análisis: {e}")
         return None
 
-# --- 2. COMPONENTES VISUALES ---
+# --- 2. FUNCIONES DE ALERTAS Y VALIDACIÓN ---
+
+def show_alert(message, alert_type="info"):
+    """Mostrar alerta personalizada"""
+    class_map = {
+        "danger": "alert-danger",
+        "warning": "alert-warning",
+        "info": "alert-info",
+        "success": "alert-success"
+    }
+    
+    icon_map = {
+        "danger": "🚨",
+        "warning": "⚠️",
+        "info": "ℹ️",
+        "success": "✅"
+    }
+    
+    st.markdown(f"""
+    <div class="alert-box {class_map[alert_type]}">
+        <strong>{icon_map[alert_type]} {message}</strong>
+    </div>
+    """, unsafe_allow_html=True)
+
+def validate_projection(growth, exit_pe, cagr, price, shares_outstanding):
+    """Validar supuestos de proyección"""
+    warnings = []
+    
+    # 1. Crecimiento extremo
+    if growth > 40:
+        warnings.append({
+            "type": "danger",
+            "msg": f"<b>Crecimiento de {growth:.1f}% anual</b> es raramente sostenible durante 5 años. Solo el 1% de empresas lo logra."
+        })
+    elif growth > 25:
+        warnings.append({
+            "type": "warning",
+            "msg": f"<b>Crecimiento de {growth:.1f}%</b> es muy agresivo. Considera escenarios conservadores."
+        })
+    
+    # 2. PER extremo
+    if exit_pe > 60:
+        warnings.append({
+            "type": "danger",
+            "msg": f"<b>PER de {exit_pe:.1f}x</b> es 4x la media del S&P 500 (15x). Riesgo alto de compresión múltiple."
+        })
+    elif exit_pe > 40:
+        warnings.append({
+            "type": "warning",
+            "msg": f"<b>PER de {exit_pe:.1f}x</b> sugiere valoración premium. Espera volatilidad."
+        })
+    
+    # 3. CAGR extremo
+    if cagr > 40:
+        warnings.append({
+            "type": "danger",
+            "msg": f"<b>CAGR de {cagr:.1f}%</b> implicaría superar a Warren Buffett (promedio 20% en 60 años)."
+        })
+    elif cagr > 25:
+        warnings.append({
+            "type": "warning",
+            "msg": f"<b>CAGR de {cagr:.1f}%</b> es excelente pero ambicioso. Verifica supuestos."
+        })
+    
+    # 4. Market Cap check
+    if shares_outstanding and shares_outstanding > 0:
+        current_mcap = price * shares_outstanding
+        projected_price = price * ((1 + cagr/100)**5)
+        projected_mcap = projected_price * shares_outstanding
+        
+        if projected_mcap > current_mcap * 8:
+            mcap_t = projected_mcap / 1e12
+            warnings.append({
+                "type": "danger",
+                "msg": f"""<b>Market Cap proyectado: ${mcap_t:.2f} TRILLONES</b><br>
+                Para contexto: PIB USA = $27T, Apple máximo = $3.5T<br>
+                Esta valoración implica que la empresa valdría más que las 10 mayores de hoy."""
+            })
+        elif projected_mcap > current_mcap * 5:
+            warnings.append({
+                "type": "warning",
+                "msg": f"<b>Market Cap se multiplicaría por {projected_mcap/current_mcap:.1f}x</b> - Requiere dominio total del sector."
+            })
+    
+    return warnings
+
+def calculate_historical_cagr(stock, years=5):
+    """Calcular CAGR histórico de la acción"""
+    try:
+        hist = stock.history(period=f"{years}y")
+        if len(hist) < 250:  # Al menos 1 año de datos
+            return None
+        
+        start_price = hist['Close'].iloc[0]
+        end_price = hist['Close'].iloc[-1]
+        actual_years = len(hist) / 252
+        
+        if start_price > 0:
+            cagr = ((end_price / start_price) ** (1/actual_years) - 1) * 100
+            return cagr
+    except:
+        return None
+    
+    return None
+
+# --- 3. COMPONENTES VISUALES ---
 
 def card_html(label, value, sub_value=None, color_class="neu"):
-    """Tarjeta métrica HTML."""
+    """Tarjeta métrica HTML"""
     sub_html = f"<div class='metric-sub {color_class}'>{sub_value}</div>" if sub_value else ""
     st.markdown(f"""
     <div class='metric-card'>
@@ -360,7 +460,7 @@ def card_html(label, value, sub_value=None, color_class="neu"):
     """, unsafe_allow_html=True)
 
 def verdict_box(price, fair_value):
-    """Caja de veredicto."""
+    """Caja de veredicto"""
     margin = ((fair_value - price) / price) * 100
     if margin > 15:
         css = "v-undervalued"
@@ -389,7 +489,22 @@ def verdict_box(price, fair_value):
     </div>
     """, unsafe_allow_html=True)
 
-# --- 3. MAIN APP ---
+def scenario_card(title, price_proj, cagr, growth, exit_pe, scenario_type="base"):
+    """Tarjeta de escenario"""
+    css_class = f"scenario-{scenario_type}"
+    
+    st.markdown(f"""
+    <div class="scenario-card {css_class}">
+        <div class="scenario-title">{title}</div>
+        <div class="scenario-price">${price_proj:,.2f}</div>
+        <div class="scenario-cagr">CAGR: {cagr:.1f}%</div>
+        <div style="margin-top:15px; font-size:18px; opacity:0.9;">
+            Growth: {growth:.1f}% | Exit PER: {exit_pe:.1f}x
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# --- 4. MAIN APP ---
 
 with st.sidebar:
     st.header("🎛️ Configuración")
@@ -411,6 +526,10 @@ if ticker:
     divs = data['div_data']
     hist_ratios = data['hist_ratios']
     finviz_g = data['finviz_growth']
+    stock = data['stock']
+    
+    # Shares outstanding
+    shares = info.get('sharesOutstanding', 0)
     
     # Crecimiento
     default_g = finviz_g if finviz_g else 10.0
@@ -473,9 +592,11 @@ if ticker:
     # 3. PESTAÑAS
     t1, t2, t3 = st.tabs(["🚀 PROYECCIÓN 2029", "💰 DIVIDENDOS", "📊 FUNDAMENTALES VS MEDIA"])
     
-    # TAB 1: PROYECCIÓN
+    # TAB 1: PROYECCIÓN MEJORADA
     with t1:
         st.markdown("<br>", unsafe_allow_html=True)
+        
+        # CALCULADORA + VALIDACIÓN
         cc1, cc2 = st.columns([1, 2])
         
         with cc1:
@@ -522,8 +643,113 @@ if ticker:
                 xaxis_title="Año"
             )
             st.plotly_chart(fig, use_container_width=True)
+        
+        # VALIDACIÓN Y ALERTAS
+        st.markdown("---")
+        st.subheader("🔍 Validación de Supuestos")
+        
+        warnings = validate_projection(growth_input, exit_pe, cagr, price, shares)
+        
+        if warnings:
+            for w in warnings:
+                show_alert(w['msg'], w['type'])
+        else:
+            show_alert("✅ Supuestos dentro de rangos razonables", "success")
+        
+        # COMPARACIÓN CON HISTÓRICO
+        hist_cagr = calculate_historical_cagr(stock, 5)
+        if hist_cagr:
+            st.markdown("---")
+            st.subheader("📈 Comparación con Histórico")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("CAGR Histórico (5Y)", f"{hist_cagr:.1f}%")
+            with col2:
+                st.metric("CAGR Proyectado", f"{cagr:.1f}%")
+            with col3:
+                diff = cagr - hist_cagr
+                st.metric("Diferencia", f"{diff:+.1f}%", 
+                         delta=f"{'Más agresivo' if diff > 0 else 'Más conservador'}")
+            
+            if cagr > hist_cagr * 1.5:
+                show_alert(
+                    f"Tu proyección ({cagr:.1f}%) supera en 50%+ el rendimiento histórico ({hist_cagr:.1f}%). "
+                    "Verifica si hay catalizadores nuevos que justifiquen esta aceleración.",
+                    "warning"
+                )
+        
+        # ESCENARIOS MÚLTIPLES
+        st.markdown("---")
+        st.subheader("🎲 Escenarios Múltiples")
+        
+        scenarios = {
+            "🚀 Bull Case": {
+                "growth": growth_input,
+                "pe": exit_pe,
+                "type": "bull"
+            },
+            "🎯 Base Case": {
+                "growth": growth_input * 0.7,
+                "pe": exit_pe * 0.8,
+                "type": "base"
+            },
+            "🐻 Bear Case": {
+                "growth": max(5, growth_input * 0.4),
+                "pe": exit_pe * 0.6,
+                "type": "bear"
+            }
+        }
+        
+        cols_esc = st.columns(3)
+        
+        for idx, (name, params) in enumerate(scenarios.items()):
+            with cols_esc[idx]:
+                f_eps_s = eps * ((1 + params["growth"]/100)**5)
+                f_price_s = f_eps_s * params["pe"]
+                cagr_s = ((f_price_s/price)**(1/5)-1)*100 if price > 0 else 0
+                
+                scenario_card(name, f_price_s, cagr_s, params["growth"], params["pe"], params["type"])
+        
+        st.caption("💡 **Bull Case** = Tus supuestos actuales | **Base Case** = Escenario más probable | **Bear Case** = Escenario defensivo")
+        
+        # TABLA DE SENSIBILIDAD
+        st.markdown("---")
+        st.subheader("📊 Análisis de Sensibilidad")
+        
+        growth_scenarios = [10, 20, 30, 40, 50]
+        pe_scenarios = [20, 30, 40, 50, 60, 70]
+        
+        sensitivity_data = []
+        for g in growth_scenarios:
+            row = []
+            for pe in pe_scenarios:
+                f_eps_sens = eps * ((1 + g/100)**5)
+                f_price_sens = f_eps_sens * pe
+                cagr_sens = ((f_price_sens/price)**(1/5)-1)*100 if price > 0 else 0
+                
+                # Colorear según CAGR
+                if cagr_sens > 30:
+                    color = "🟢"
+                elif cagr_sens > 15:
+                    color = "🟡"
+                else:
+                    color = "🔴"
+                
+                row.append(f"{color} {cagr_sens:.1f}%")
+            sensitivity_data.append(row)
+        
+        df_sens = pd.DataFrame(
+            sensitivity_data,
+            columns=[f"PER {pe}x" for pe in pe_scenarios],
+            index=[f"Growth {g}%" for g in growth_scenarios]
+        )
+        
+        st.dataframe(df_sens, use_container_width=True)
+        st.caption("💡 CAGR esperado según diferentes combinaciones | 🟢 Excelente (>30%) | 🟡 Bueno (15-30%) | 🔴 Conservador (<15%)")
 
-    # TAB 2: DIVIDENDOS
+    # TAB 2: DIVIDENDOS (SIN CAMBIOS)
     with t2:
         st.markdown("<br>", unsafe_allow_html=True)
         
@@ -563,7 +789,7 @@ if ticker:
         else:
             st.warning("⚠️ Esta empresa no paga dividendos o no tiene historial suficiente.")
 
-    # TAB 3: RATIOS
+    # TAB 3: RATIOS (SIN CAMBIOS)
     with t3:
         st.markdown("<br>", unsafe_allow_html=True)
         st.subheader("🔎 Análisis Fundamental vs Histórico")
@@ -611,9 +837,10 @@ if ticker:
 
     # Footer
     st.markdown("---")
-    st.markdown("""
+    st.markdown(f"""
     <div style='text-align:center; color:#7f8c8d; font-size:16px; padding:20px'>
         💡 Esta herramienta es solo educativa. No constituye asesoramiento financiero.<br>
-        📊 <b>Fuentes:</b> Yahoo Finance (ratios actuales y históricos) • Finviz (EPS next 5Y)
+        📊 <b>Fuentes:</b> Yahoo Finance (ratios actuales y históricos) • Finviz (EPS next 5Y)<br>
+        🔍 <b>Market Cap actual:</b> ${(price * shares / 1e9):.2f}B | <b>Shares:</b> {shares/1e9:.2f}B
     </div>
     """, unsafe_allow_html=True)
