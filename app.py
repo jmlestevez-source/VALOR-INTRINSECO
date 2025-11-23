@@ -105,7 +105,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. FUNCIONES DE SCRAPING (SIN CAMBIOS) ---
+# --- 1. FUNCIONES DE SCRAPING ---
 
 @st.cache_data(ttl=3600)
 def get_finviz_growth(ticker):
@@ -282,7 +282,7 @@ def calculate_robust_ratios(ticker, years=5):
 
 @st.cache_data(ttl=3600)
 def get_full_analysis(ticker, years_hist=10):
-    """Análisis completo con fuentes múltiples"""
+    """Análisis completo con fuentes múltiples - SIN objeto stock"""
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
@@ -334,7 +334,7 @@ def get_full_analysis(ticker, years_hist=10):
             },
             'hist_ratios': hist_ratios, 
             'finviz_growth': finviz_g,
-            'stock': stock
+            'ticker': ticker
         }
         
     except Exception as e:
@@ -427,9 +427,10 @@ def validate_projection(growth, exit_pe, cagr, price, shares_outstanding):
     
     return warnings
 
-def calculate_historical_cagr(stock, years=5):
+def calculate_historical_cagr(ticker, years=5):
     """Calcular CAGR histórico de la acción"""
     try:
+        stock = yf.Ticker(ticker)
         hist = stock.history(period=f"{years}y")
         if len(hist) < 250:  # Al menos 1 año de datos
             return None
@@ -526,7 +527,7 @@ if ticker:
     divs = data['div_data']
     hist_ratios = data['hist_ratios']
     finviz_g = data['finviz_growth']
-    stock = data['stock']
+    ticker_symbol = data['ticker']
     
     # Shares outstanding
     shares = info.get('sharesOutstanding', 0)
@@ -657,7 +658,7 @@ if ticker:
             show_alert("✅ Supuestos dentro de rangos razonables", "success")
         
         # COMPARACIÓN CON HISTÓRICO
-        hist_cagr = calculate_historical_cagr(stock, 5)
+        hist_cagr = calculate_historical_cagr(ticker_symbol, 5)
         if hist_cagr:
             st.markdown("---")
             st.subheader("📈 Comparación con Histórico")
@@ -749,7 +750,7 @@ if ticker:
         st.dataframe(df_sens, use_container_width=True)
         st.caption("💡 CAGR esperado según diferentes combinaciones | 🟢 Excelente (>30%) | 🟡 Bueno (15-30%) | 🔴 Conservador (<15%)")
 
-    # TAB 2: DIVIDENDOS (SIN CAMBIOS)
+    # TAB 2: DIVIDENDOS
     with t2:
         st.markdown("<br>", unsafe_allow_html=True)
         
@@ -789,7 +790,7 @@ if ticker:
         else:
             st.warning("⚠️ Esta empresa no paga dividendos o no tiene historial suficiente.")
 
-    # TAB 3: RATIOS (SIN CAMBIOS)
+    # TAB 3: RATIOS
     with t3:
         st.markdown("<br>", unsafe_allow_html=True)
         st.subheader("🔎 Análisis Fundamental vs Histórico")
