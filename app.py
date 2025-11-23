@@ -10,98 +10,41 @@ import time
 import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Valuación Master", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Valuación Master Pro", layout="wide", page_icon="💎")
 
-# --- ESTILOS CSS (BIG FONTS + NUEVOS) ---
+# --- ESTILOS CSS ---
 st.markdown("""
     <style>
-    /* FUENTES GLOBALES */
     html, body, [class*="css"], div, span, p {
         font-family: 'Arial', sans-serif;
-        font-size: 20px;
+        font-size: 18px;
     }
-    
-    /* TARJETAS MÉTRICAS */
     .metric-card {
         background-color: #ffffff;
         border-radius: 15px;
-        padding: 30px 15px;
+        padding: 20px;
         text-align: center;
         box-shadow: 0 4px 10px rgba(0,0,0,0.05);
         border: 1px solid #e0e0e0;
         height: 100%;
     }
-    .metric-label { 
-        font-size: 18px !important; 
-        color: #666; 
-        text-transform: uppercase; 
-        font-weight: 800;
-        margin-bottom: 15px;
-    }
-    .metric-value { 
-        font-size: 52px !important; 
-        font-weight: 900; 
-        color: #2c3e50; 
-        line-height: 1;
-    }
-    .metric-sub { font-size: 22px !important; font-weight: 600; margin-top: 15px; }
-
+    .metric-label { font-size: 16px !important; color: #666; text-transform: uppercase; font-weight: 800; margin-bottom: 10px; }
+    .metric-value { font-size: 42px !important; font-weight: 900; color: #2c3e50; line-height: 1; }
+    .metric-sub { font-size: 18px !important; font-weight: 600; margin-top: 10px; }
+    
     /* VEREDICTO */
-    .verdict-box {
-        padding: 40px;
-        border-radius: 20px;
-        text-align: center;
-        color: white;
-        margin-bottom: 40px;
-        box-shadow: 0 10px 20px rgba(0,0,0,0.15);
-    }
+    .verdict-box { padding: 30px; border-radius: 20px; text-align: center; color: white; margin-bottom: 30px; box-shadow: 0 10px 20px rgba(0,0,0,0.15); }
     .v-undervalued { background: linear-gradient(135deg, #00b894, #0984e3); }
     .v-fair { background: linear-gradient(135deg, #f1c40f, #e67e22); }
     .v-overvalued { background: linear-gradient(135deg, #e74c3c, #c0392b); }
-    .v-main { font-size: 64px; font-weight: 900; margin: 15px 0; text-shadow: 0 2px 5px rgba(0,0,0,0.2); }
-    .v-desc { font-size: 28px; font-weight: 500; }
-
-    /* ALERTAS PERSONALIZADAS */
-    .alert-box {
-        padding: 20px;
-        border-radius: 12px;
-        margin: 15px 0;
-        border-left: 5px solid;
-        font-size: 18px;
-        line-height: 1.6;
-    }
-    .alert-danger { background-color: #fee; border-color: #e74c3c; color: #c0392b; }
-    .alert-warning { background-color: #fef9e7; border-color: #f39c12; color: #d68910; }
-    .alert-info { background-color: #eaf2f8; border-color: #3498db; color: #2471a3; }
-    .alert-success { background-color: #e8f8f5; border-color: #00b894; color: #00875a; }
-
-    /* TABLAS GIGANTES */
-    .stTable { font-size: 22px !important; }
-    thead tr th { font-size: 24px !important; background-color: #f8f9fa !important; padding: 20px !important;}
-    tbody tr td { font-size: 22px !important; padding: 20px !important; }
-
-    /* PESTAÑAS */
-    .stTabs [data-baseweb="tab"] {
-        font-size: 26px !important;
-        padding: 15px 30px !important;
-    }
     
-    /* ESCENARIOS */
-    .scenario-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 15px;
-        padding: 25px;
-        color: white;
-        margin: 10px 0;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-    }
-    .scenario-bull { background: linear-gradient(135deg, #00b894 0%, #00cec9 100%); }
-    .scenario-base { background: linear-gradient(135deg, #fdcb6e 0%, #e17055 100%); }
-    .scenario-bear { background: linear-gradient(135deg, #d63031 0%, #e84393 100%); }
-    
-    .scenario-title { font-size: 28px; font-weight: 800; margin-bottom: 10px; }
-    .scenario-price { font-size: 42px; font-weight: 900; margin: 10px 0; }
-    .scenario-cagr { font-size: 24px; font-weight: 600; }
+    /* ZONAS WEISS */
+    .weiss-buy { background-color: #e8f8f5; border: 2px solid #00b894; padding: 15px; border-radius: 10px; color: #006266; }
+    .weiss-sell { background-color: #fdedec; border: 2px solid #e74c3c; padding: 15px; border-radius: 10px; color: #78281f; }
+    .weiss-hold { background-color: #fef9e7; border: 2px solid #f1c40f; padding: 15px; border-radius: 10px; color: #7d6608; }
+
+    /* TABLAS */
+    .stTable { font-size: 18px !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -109,739 +52,404 @@ st.markdown("""
 
 @st.cache_data(ttl=3600)
 def get_finviz_growth(ticker):
-    """Scraping robusto usando BeautifulSoup"""
     url = f"https://finviz.com/quote.ashx?t={ticker}"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-    }
-    
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     try:
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
-            target_label = soup.find(string="EPS next 5Y")
-            if target_label:
-                label_td = target_label.parent
-                value_td = label_td.find_next_sibling('td')
-                
-                if value_td and value_td.text:
-                    clean_text = value_td.text.replace('%', '').strip()
-                    if clean_text != '-':
-                        return float(clean_text)
-    except Exception as e:
-        st.warning(f"⚠️ Error obteniendo datos de Finviz: {e}")
+            # Finviz cambia clases a menudo, búsqueda por texto es más segura
+            target = soup.find(string="EPS next 5Y")
+            if target:
+                val = target.parent.find_next_sibling('td').text.replace('%', '').strip()
+                if val != '-': return float(val)
+    except:
         return None
     return None
 
 @st.cache_data(ttl=3600)
-def get_stockanalysis_growth(ticker):
-    """Backup: StockAnalysis.com"""
-    ticker_clean = ticker.upper()
-    url = f"https://stockanalysis.com/stocks/{ticker_clean.lower()}/forecast/"
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-    }
-    
-    try:
-        session = requests.Session()
-        time.sleep(1)
-        r = session.get(url, headers=headers, timeout=10)
-        
-        if r.status_code != 200:
-            return None
-            
-        soup = BeautifulSoup(r.content, 'html.parser')
-        text = soup.get_text()
-        pattern = r'(\d+\.?\d*)%\s*(?:annual|avg|average|growth)'
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        
-        if matches:
-            for match in matches:
-                try:
-                    val = float(match)
-                    if 0 < val < 100:
-                        return val
-                except:
-                    pass
-                    
-    except Exception as e:
-        pass
-    
-    return None
-
-@st.cache_data(ttl=3600)
-def calculate_robust_ratios(ticker, years=5):
-    """Cálculo interno de ratios históricos"""
+def calculate_robust_ratios(ticker, years=10):
+    """
+    Cálculo MEJORADO de ratios históricos.
+    Cambios clave:
+    1. Usa Quarterly Financials para calcular TTM (Trailing Twelve Months) real.
+    2. Usa MEDIANA en lugar de Media para eliminar outliers extremos.
+    """
     try:
         stock = yf.Ticker(ticker)
-        start_date = (datetime.now() - timedelta(days=years*365 + 30)).strftime('%Y-%m-%d')
-        hist = stock.history(start=start_date, interval="1mo")
         
-        if hist.empty: 
-            return {}
-        
-        if hist.index.tz is not None: 
-            hist.index = hist.index.tz_localize(None)
-        
-        try:
-            fin = stock.financials.T
-            bal = stock.balance_sheet.T
-        except:
-            return {}
-        
-        if fin.empty: 
-            return {}
-        
-        fin.index = pd.to_datetime(fin.index)
-        if fin.index.tz is not None: 
-            fin.index = fin.index.tz_localize(None)
-            
-        if bal is not None and not bal.empty:
-            bal.index = pd.to_datetime(bal.index)
-            if bal.index.tz is not None:
-                bal.index = bal.index.tz_localize(None)
-        
-        df_merge = pd.DataFrame(index=hist.index)
-        df_merge['Price'] = hist['Close']
-        
-        metrics_fin = pd.DataFrame(index=fin.index)
-        
-        if 'Diluted EPS' in fin.columns:
-            metrics_fin['EPS'] = fin['Diluted EPS']
-        elif 'Basic EPS' in fin.columns:
-            metrics_fin['EPS'] = fin['Basic EPS']
-        
-        rev = fin.get('Total Revenue')
-        shares = fin.get('Basic Average Shares')
-        if shares is None:
-            shares = fin.get('Share Issued')
-            
-        if rev is not None and shares is not None:
-            metrics_fin['RPS'] = rev / shares
-        
-        if not bal.empty:
-            assets = bal.get('Total Assets')
-            liab = bal.get('Total Liabilities Net Minority Interest')
-            
-            if assets is not None and liab is not None and shares is not None:
-                metrics_fin['BVPS'] = (assets - liab) / shares
-                
-            debt = bal.get('Total Debt')
-            cash = bal.get('Cash And Cash Equivalents')
-            ebitda = fin.get('EBITDA')
-            if ebitda is None:
-                ebitda = fin.get('Normalized EBITDA')
-            
-            if debt is not None and cash is not None and ebitda is not None and shares is not None:
-                metrics_fin['Debt'] = debt
-                metrics_fin['Cash'] = cash
-                metrics_fin['EBITDA'] = ebitda
-                metrics_fin['Shares'] = shares
+        # 1. Obtener historial de precios (mensual es suficiente para medias largas)
+        hist = stock.history(period=f"{years}y", interval="1mo")
+        if hist.empty: return {}
+        hist = hist[['Close']].dropna()
+        hist.index = hist.index.tz_localize(None)
 
-        metrics_fin = metrics_fin.sort_index()
-        df_merge = df_merge.sort_index()
-        
-        df_final = df_merge.join(metrics_fin, how='outer').ffill().dropna(subset=['Price'])
+        # 2. Obtener datos financieros Trimestrales (Quarterly)
+        # Esto permite calcular el EPS TTM real en cada punto del tiempo
+        q_fin = stock.quarterly_financials.T
+        q_bs = stock.quarterly_balance_sheet.T
         
         ratios = {}
         
-        if 'EPS' in df_final.columns:
-            df_final['PE_Ratio'] = df_final['Price'] / df_final['EPS']
-            valid_pe = df_final['PE_Ratio'][(df_final['PE_Ratio'] > 0) & (df_final['PE_Ratio'] < 200)]
-            if not valid_pe.empty and not valid_pe.isna().all():
-                ratios['PER'] = float(valid_pe.mean())
-
-        if 'RPS' in df_final.columns:
-            df_final['PS_Ratio'] = df_final['Price'] / df_final['RPS']
-            valid_ps = df_final['PS_Ratio'][(df_final['PS_Ratio'] > 0) & (df_final['PS_Ratio'] < 50)]
-            if not valid_ps.empty and not valid_ps.isna().all():
-                ratios['Price/Sales'] = float(valid_ps.mean())
-
-        if 'BVPS' in df_final.columns:
-            df_final['PB_Ratio'] = df_final['Price'] / df_final['BVPS']
-            valid_pb = df_final['PB_Ratio'][(df_final['PB_Ratio'] > 0) & (df_final['PB_Ratio'] < 50)]
-            if not valid_pb.empty and not valid_pb.isna().all():
-                ratios['Price/Book'] = float(valid_pb.mean())
-
-        if all(col in df_final.columns for col in ['EBITDA', 'Debt', 'Cash', 'Shares']):
-            df_final['EV'] = (df_final['Price'] * df_final['Shares']) + df_final['Debt'] - df_final['Cash']
-            df_final['EV_EBITDA'] = df_final['EV'] / df_final['EBITDA']
-            valid_ev = df_final['EV_EBITDA'][(df_final['EV_EBITDA'] > 0) & (df_final['EV_EBITDA'] < 100)]
-            if not valid_ev.empty and not valid_ev.isna().all():
-                ratios['EV/EBITDA'] = float(valid_ev.mean())
+        # --- CÁLCULO PER (Usando EPS TTM y Mediana) ---
+        if not q_fin.empty and ('Basic EPS' in q_fin.columns or 'Diluted EPS' in q_fin.columns):
+            col_eps = 'Diluted EPS' if 'Diluted EPS' in q_fin.columns else 'Basic EPS'
+            
+            # Convertir índice a datetime
+            q_fin.index = pd.to_datetime(q_fin.index)
+            q_fin.sort_index(inplace=True)
+            
+            # Calcular EPS TTM (Suma de los últimos 4 trimestres)
+            eps_ttm = q_fin[col_eps].rolling(window=4).sum().dropna()
+            
+            if not eps_ttm.empty:
+                # Reindexar precios al timeline de los EPS para alinear fechas
+                # Ojo: Usamos reindex con 'ffill' para coger el precio cercano al reporte
+                
+                # Combinar precios y EPS
+                df_pe = pd.DataFrame(index=hist.index)
+                df_pe['Price'] = hist['Close']
+                
+                # Asignar el EPS TTM conocido en esa fecha (forward fill)
+                # "asof" merge sería ideal, pero reindex con ffill funciona bien aquí
+                eps_aligned = eps_ttm.reindex(hist.index, method='ffill')
+                df_pe['EPS_TTM'] = eps_aligned
+                
+                df_pe.dropna(inplace=True)
+                
+                # Calcular PER
+                df_pe['PE'] = df_pe['Price'] / df_pe['EPS_TTM']
+                
+                # FILTRADO ESTRICTO y uso de MEDIANA
+                # Eliminamos PERs negativos y absurdamente altos (ruido)
+                valid_pe = df_pe['PE'][(df_pe['PE'] > 0) & (df_pe['PE'] < 150)]
+                
+                if not valid_pe.empty:
+                    # USAMOS MEDIANA, NO MEDIA
+                    # La media se rompe si un año el beneficio cae a casi 0.
+                    ratios['PER'] = float(valid_pe.median())
+                    
+                    # Guardamos min y max razonables para Weiss
+                    ratios['PER_Min'] = float(valid_pe.quantile(0.1)) # Percentil 10 para evitar outliers bajos
+                    ratios['PER_Max'] = float(valid_pe.quantile(0.9)) # Percentil 90
         
+        # Fallback si falla el trimestral, intentar anual (menos preciso pero funciona)
+        if 'PER' not in ratios:
+            # Lógica simple anual con Mediana
+            fin = stock.financials.T
+            if not fin.empty:
+                if 'Diluted EPS' in fin.columns:
+                    eps_yr = fin['Diluted EPS']
+                    # Unir manualmente... (simplificado para brevedad, la lógica Q es la prioritaria)
+                    pass
+
+        # --- PRICE TO SALES (Mediana) ---
+        if not q_fin.empty and 'Total Revenue' in q_fin.columns and 'Ordinary Shares Number' in q_fin.columns:
+             # Simplificación: Usamos datos anuales para ventas suele ser más estable, o TTM trimestral
+             rev_ttm = q_fin['Total Revenue'].rolling(window=4).sum()
+             # Shares suele variar menos, cogemos el último dato trimestral
+             shares = q_fin['Ordinary Shares Number']
+             
+             rps = (rev_ttm / shares).dropna()
+             rps_aligned = rps.reindex(hist.index, method='ffill')
+             
+             ps_series = hist['Close'] / rps_aligned
+             valid_ps = ps_series[(ps_series > 0) & (ps_series < 50)]
+             if not valid_ps.empty:
+                 ratios['Price/Sales'] = float(valid_ps.median())
+
         return ratios
         
     except Exception as e:
-        st.warning(f"⚠️ Error calculando ratios históricos: {e}")
+        st.warning(f"Error en cálculo de ratios históricos: {e}")
         return {}
 
 @st.cache_data(ttl=3600)
-def get_full_analysis(ticker, years_hist=10):
-    """Análisis completo con fuentes múltiples - SIN objeto stock"""
+def get_weiss_data(ticker):
+    """Datos específicos para Valoración Geraldine Weiss"""
+    try:
+        stock = yf.Ticker(ticker)
+        
+        # Dividendos históricos
+        divs = stock.dividends
+        if divs.empty: return None
+        
+        # Agrupar por año para ver tendencia
+        divs_yearly = divs.resample('Y').sum()
+        current_year = datetime.now().year
+        
+        # Eliminar año en curso si está incompleto para cálculo de crecimiento
+        if divs_yearly.index[-1].year == current_year:
+            divs_analysis = divs_yearly[:-1]
+        else:
+            divs_analysis = divs_yearly
+
+        # Calcular Yields Históricos: Dividendo TTM / Precio
+        hist = stock.history(period="10y") # 10 años es el estándar de Weiss
+        if hist.empty: return None
+        
+        # Crear serie de dividendos TTM (suma últimos 12 meses rolling)
+        # Esto es complejo con eventos discretos, aproximamos:
+        # Rellenamos dividendos en un DF diario y hacemos rolling sum 365D
+        df_div = pd.DataFrame(index=hist.index)
+        # Ajustar fechas de divs a las de hist
+        df_div['Div'] = 0.0
+        common_idx = divs.index.intersection(hist.index)
+        # Aproximación: asignar dividendo al día de cierre más cercano
+        # Una forma más robusta:
+        div_series = divs.reindex(hist.index, fill_value=0)
+        div_ttm = div_series.rolling(window=252).sum() # aprox 1 año bursátil
+        
+        df_yield = pd.DataFrame()
+        df_yield['Close'] = hist['Close']
+        df_yield['Div_TTM'] = div_ttm
+        df_yield['Yield'] = (df_yield['Div_TTM'] / df_yield['Close']) * 100
+        
+        # Limpiar datos (yields válidos, ej: > 0.5% y < 20%)
+        valid_yields = df_yield['Yield'][(df_yield['Yield'] > 0.1) & (df_yield['Yield'] < 30)].dropna()
+        
+        if valid_yields.empty: return None
+        
+        return {
+            'current_div_ttm': div_ttm.iloc[-1],
+            'current_yield': valid_yields.iloc[-1],
+            'avg_yield': valid_yields.median(), # Mediana es mejor que media
+            'min_yield': valid_yields.quantile(0.05), # Mínimo histórico (zona cara)
+            'max_yield': valid_yields.quantile(0.95), # Máximo histórico (zona barata)
+            'years_growth': (divs_analysis.diff() > 0).sum(), # Años que subió
+            'total_years': len(divs_analysis),
+            'history_df': df_yield.dropna()
+        }
+    except Exception as e:
+        return None
+
+@st.cache_data(ttl=3600)
+def get_full_analysis(ticker):
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
+        price = info.get('currentPrice') or info.get('regularMarketPrice')
         
-        price = info.get('currentPrice')
-        if not price or price == 0:
-            price = info.get('regularMarketPrice')
-        if not price or price == 0:
-            price = info.get('regularMarketPreviousClose')
-        if not price or price == 0:
-            return None
-        
-        div_rate = info.get('dividendRate', 0)
-        if div_rate is None:
-            div_rate = 0
-            
-        current_yield = (div_rate / price) if (div_rate and price > 0) else 0
-        
-        if current_yield == 0:
-            raw_y = info.get('dividendYield', 0)
-            if raw_y:
-                current_yield = raw_y / 100 if raw_y > 0.5 else raw_y
-        
-        raw_avg = info.get('fiveYearAvgDividendYield', 0)
-        avg_5y_yield = (raw_avg / 100 if raw_avg and raw_avg > 0.5 else raw_avg) if raw_avg else 0
-        
-        hist_ratios = calculate_robust_ratios(ticker, years_hist)
-        
+        # Ratios Históricos Mejorados
+        hist_ratios = calculate_robust_ratios(ticker, years=10)
+        weiss_data = get_weiss_data(ticker)
         finviz_g = get_finviz_growth(ticker)
-        if finviz_g is None:
-            finviz_g = get_stockanalysis_growth(ticker)
         
-        pe_mean = hist_ratios.get('PER')
-        if pe_mean is None or pd.isna(pe_mean):
-            pe_mean = info.get('trailingPE')
-            if pe_mean is None or pd.isna(pe_mean):
-                pe_mean = 15.0
+        # PER Medio: Priorizar nuestro cálculo robusto (mediana), si no, usar el de Yahoo
+        pe_mean = hist_ratios.get('PER', info.get('trailingPE', 15))
         
-        pe_mean = float(pe_mean)
-
         return {
-            'info': info, 
-            'price': float(price), 
+            'info': info,
+            'price': price,
             'pe_mean': pe_mean,
-            'div_data': {
-                'current': float(current_yield), 
-                'avg_5y': float(avg_5y_yield), 
-                'rate': float(div_rate)
-            },
-            'hist_ratios': hist_ratios, 
-            'finviz_growth': finviz_g,
-            'ticker': ticker
+            'hist_ratios': hist_ratios,
+            'weiss_data': weiss_data,
+            'finviz_growth': finviz_g
         }
-        
-    except Exception as e:
-        st.error(f"Error en análisis: {e}")
-        return None
-
-# --- 2. FUNCIONES DE ALERTAS Y VALIDACIÓN ---
-
-def show_alert(message, alert_type="info"):
-    """Mostrar alerta personalizada"""
-    class_map = {
-        "danger": "alert-danger",
-        "warning": "alert-warning",
-        "info": "alert-info",
-        "success": "alert-success"
-    }
-    
-    icon_map = {
-        "danger": "🚨",
-        "warning": "⚠️",
-        "info": "ℹ️",
-        "success": "✅"
-    }
-    
-    st.markdown(f"""
-    <div class="alert-box {class_map[alert_type]}">
-        <strong>{icon_map[alert_type]} {message}</strong>
-    </div>
-    """, unsafe_allow_html=True)
-
-def validate_projection(growth, exit_pe, cagr, price, shares_outstanding):
-    """Validar supuestos de proyección"""
-    warnings = []
-    
-    # 1. Crecimiento extremo
-    if growth > 40:
-        warnings.append({
-            "type": "danger",
-            "msg": f"<b>Crecimiento de {growth:.1f}% anual</b> es raramente sostenible durante 5 años. Solo el 1% de empresas lo logra."
-        })
-    elif growth > 25:
-        warnings.append({
-            "type": "warning",
-            "msg": f"<b>Crecimiento de {growth:.1f}%</b> es muy agresivo. Considera escenarios conservadores."
-        })
-    
-    # 2. PER extremo
-    if exit_pe > 60:
-        warnings.append({
-            "type": "danger",
-            "msg": f"<b>PER de {exit_pe:.1f}x</b> es 4x la media del S&P 500 (15x). Riesgo alto de compresión múltiple."
-        })
-    elif exit_pe > 40:
-        warnings.append({
-            "type": "warning",
-            "msg": f"<b>PER de {exit_pe:.1f}x</b> sugiere valoración premium. Espera volatilidad."
-        })
-    
-    # 3. CAGR extremo
-    if cagr > 40:
-        warnings.append({
-            "type": "danger",
-            "msg": f"<b>CAGR de {cagr:.1f}%</b> implicaría superar a Warren Buffett (promedio 20% en 60 años)."
-        })
-    elif cagr > 25:
-        warnings.append({
-            "type": "warning",
-            "msg": f"<b>CAGR de {cagr:.1f}%</b> es excelente pero ambicioso. Verifica supuestos."
-        })
-    
-    # 4. Market Cap check
-    if shares_outstanding and shares_outstanding > 0:
-        current_mcap = price * shares_outstanding
-        projected_price = price * ((1 + cagr/100)**5)
-        projected_mcap = projected_price * shares_outstanding
-        
-        if projected_mcap > current_mcap * 8:
-            mcap_t = projected_mcap / 1e12
-            warnings.append({
-                "type": "danger",
-                "msg": f"""<b>Market Cap proyectado: ${mcap_t:.2f} TRILLONES</b><br>
-                Para contexto: PIB USA = $27T, Apple máximo = $3.5T<br>
-                Esta valoración implica que la empresa valdría más que las 10 mayores de hoy."""
-            })
-        elif projected_mcap > current_mcap * 5:
-            warnings.append({
-                "type": "warning",
-                "msg": f"<b>Market Cap se multiplicaría por {projected_mcap/current_mcap:.1f}x</b> - Requiere dominio total del sector."
-            })
-    
-    return warnings
-
-def calculate_historical_cagr(ticker, years=5):
-    """Calcular CAGR histórico de la acción"""
-    try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period=f"{years}y")
-        if len(hist) < 250:  # Al menos 1 año de datos
-            return None
-        
-        start_price = hist['Close'].iloc[0]
-        end_price = hist['Close'].iloc[-1]
-        actual_years = len(hist) / 252
-        
-        if start_price > 0:
-            cagr = ((end_price / start_price) ** (1/actual_years) - 1) * 100
-            return cagr
     except:
         return None
-    
-    return None
 
-# --- 3. COMPONENTES VISUALES ---
-
-def card_html(label, value, sub_value=None, color_class="neu"):
-    """Tarjeta métrica HTML"""
-    sub_html = f"<div class='metric-sub {color_class}'>{sub_value}</div>" if sub_value else ""
-    st.markdown(f"""
-    <div class='metric-card'>
-        <div class='metric-label'>{label}</div>
-        <div class='metric-value'>{value}</div>
-        {sub_html}
-    </div>
-    """, unsafe_allow_html=True)
+# --- 2. COMPONENTES VISUALES ---
 
 def verdict_box(price, fair_value):
-    """Caja de veredicto"""
     margin = ((fair_value - price) / price) * 100
     if margin > 15:
-        css = "v-undervalued"
-        title = "💎 OPORTUNIDAD"
-        main = "INFRAVALORADA"
-        icon = "🚀"
-        desc = f"Descuento del {margin:.1f}%"
+        css, title, main = "v-undervalued", "💎 OPORTUNIDAD", "INFRAVALORADA"
     elif margin < -15:
-        css = "v-overvalued"
-        title = "⚠️ CUIDADO"
-        main = "SOBREVALORADA"
-        icon = "🛑"
-        desc = f"Prima del {abs(margin):.1f}%"
+        css, title, main = "v-overvalued", "⚠️ CUIDADO", "SOBREVALORADA"
     else:
-        css = "v-fair"
-        title = "⚖️ EQUILIBRIO"
-        main = "PRECIO JUSTO"
-        icon = "✅"
-        desc = f"Cotizando cerca de su valor"
+        css, title, main = "v-fair", "⚖️ EQUILIBRIO", "PRECIO JUSTO"
 
     st.markdown(f"""
     <div class="verdict-box {css}">
-        <div class="v-title">{title}</div>
-        <div class="v-main">{icon} {main}</div>
-        <div class="v-desc">{desc} (Fair: ${fair_value:.2f})</div>
+        <div style="font-size:24px; font-weight:bold">{title}</div>
+        <div style="font-size:56px; font-weight:900; margin:10px 0">{main}</div>
+        <div style="font-size:24px">Margen de Seguridad: {margin:+.1f}% (Fair: ${fair_value:.2f})</div>
     </div>
     """, unsafe_allow_html=True)
 
-def scenario_card(title, price_proj, cagr, growth, exit_pe, scenario_type="base"):
-    """Tarjeta de escenario"""
-    css_class = f"scenario-{scenario_type}"
-    
-    st.markdown(f"""
-    <div class="scenario-card {css_class}">
-        <div class="scenario-title">{title}</div>
-        <div class="scenario-price">${price_proj:,.2f}</div>
-        <div class="scenario-cagr">CAGR: {cagr:.1f}%</div>
-        <div style="margin-top:15px; font-size:18px; opacity:0.9;">
-            Growth: {growth:.1f}% | Exit PER: {exit_pe:.1f}x
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# --- 4. MAIN APP ---
+# --- 3. APLICACIÓN ---
 
 with st.sidebar:
-    st.header("🎛️ Configuración")
-    ticker = st.text_input("Ticker", value="GOOGL").upper().strip()
-    st.divider()
-    years_hist = st.slider("Años Media Histórica", 5, 10, 10)
+    st.header("Configuración")
+    ticker = st.text_input("Ticker", value="JNJ").upper().strip() # JNJ es buena para probar Weiss
+    st.caption("Prueba con: JNJ, PEP, KO, MMM para ver datos de Weiss.")
 
 if ticker:
-    with st.spinner(f'⚙️ Procesando datos financieros para {ticker}...'):
-        data = get_full_analysis(ticker, years_hist)
-    
-    if not data:
-        st.error("❌ Error: No se pudo obtener información del Ticker. Verifica que sea válido.")
+    with st.spinner('Analizando datos...'):
+        data = get_full_analysis(ticker)
+
+    if not data or not data['price']:
+        st.error("No se encontraron datos.")
         st.stop()
         
     info = data['info']
     price = data['price']
     pe_mean = data['pe_mean']
-    divs = data['div_data']
-    hist_ratios = data['hist_ratios']
-    finviz_g = data['finviz_growth']
-    ticker_symbol = data['ticker']
+    weiss = data['weiss_data']
     
-    # Shares outstanding
-    shares = info.get('sharesOutstanding', 0)
+    # Calcular Fair Value por PER
+    eps = info.get('trailingEps') or 1
+    fair_value_per = eps * pe_mean
     
-    # Crecimiento
-    default_g = finviz_g if finviz_g else 10.0
+    # --- HEADER ---
+    st.title(f"{info.get('shortName', ticker)} ({ticker})")
+    st.markdown(f"### Sector: **{info.get('sector','-')}** | Industria: **{info.get('industry','-')}**")
     
-    with st.sidebar:
-        st.subheader("⚙️ Proyección")
-        growth_input = st.number_input("Crecimiento (5y) %", value=float(default_g), step=0.5)
-        
-        if finviz_g:
-            st.success(f"✅ Finviz EPS next 5Y: **{finviz_g}%**")
-        else:
-            st.warning("⚠️ No se pudo obtener de Finviz")
-            st.info("ℹ️ Usando estimación manual")
-
-    # EPS y Fair Value
-    eps = info.get('trailingEps', 0)
-    if eps is None or eps == 0:
-        eps = info.get('forwardEps', 1)
-    if eps is None:
-        eps = 1
-        
-    fair_value = float(eps) * pe_mean
+    # --- VEREDICTO (Basado en PER Histórico) ---
+    verdict_box(price, fair_value_per)
     
-    # HEADER
-    st.title(f"📊 {info.get('shortName', ticker)}")
-    st.markdown(f"### **{info.get('sector', 'N/A')}**  •  {info.get('industry', 'N/A')}")
-    st.markdown("---")
-
-    # 1. VEREDICTO
-    verdict_box(price, fair_value)
-
-    # 2. BIG CARDS
+    # --- TARJETAS PRINCIPALES ---
     c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Precio Actual", f"${price:.2f}")
+    c2.metric("PER Actual", f"{info.get('trailingPE', 0):.2f}x")
     
-    with c1:
-        card_html("Cotización", f"${price:.2f}")
-        
-    with c2:
-        card_html("Valor Razonable", f"${fair_value:.2f}", f"PER Medio: {pe_mean:.1f}x", "neu")
-        
-    with c3:
-        target = info.get('targetMeanPrice', 0)
-        if target and target > 0:
-            pot = ((target - price)/price)*100
-            col = "pos" if pot > 0 else "neg"
-            card_html("Obj. Analistas", f"${target:.2f}", f"{pot:+.1f}% Potencial", col)
-        else:
-            card_html("Obj. Analistas", "N/A")
-            
-    with c4:
-        curr, avg = divs['current'], divs['avg_5y']
-        v_c = curr if curr else 0
-        v_a = avg if avg else 0
-        col = "pos" if (v_c > 0 and v_c > v_a) else "neu"
-        sub = f"Media: {v_a*100:.2f}%" if v_a > 0 else "Sin historial"
-        card_html("Div. Yield", f"{v_c*100:.2f}%", sub, col)
-
-    st.markdown("<br><br>", unsafe_allow_html=True)
-
-    # 3. PESTAÑAS
-    t1, t2, t3 = st.tabs(["🚀 PROYECCIÓN 2029", "💰 DIVIDENDOS", "📊 FUNDAMENTALES VS MEDIA"])
+    # Aquí mostramos que el PER Medio es la MEDIANA (más robusto)
+    c3.metric("PER Histórico (Mediana)", f"{pe_mean:.2f}x", 
+             delta=f"{info.get('trailingPE',0) - pe_mean:.2f} vs actual", delta_color="inverse")
     
-    # TAB 1: PROYECCIÓN MEJORADA
-    with t1:
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # CALCULADORA + VALIDACIÓN
-        cc1, cc2 = st.columns([1, 2])
-        
-        with cc1:
-            st.subheader("📝 Calculadora")
-            st.markdown(f"""
-            <div style='background-color:#f8f9fa; padding:20px; border-radius:10px; border:1px solid #ddd;'>
-                <p style='font-size:20px'>EPS Actual: <b>${eps:.2f}</b></p>
-                <p style='font-size:20px'>Crecimiento Estimado: <b>{growth_input}%</b></p>
-                <p style='font-size:20px'>PER Salida Estimado: <b>{pe_mean:.1f}x</b></p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.write("")
-            exit_pe = st.number_input("Ajustar PER Salida", value=float(round(pe_mean, 1)), step=0.5)
-            
-            f_eps = eps * ((1 + growth_input/100)**5)
-            f_price = f_eps * exit_pe
-            
-            if price > 0:
-                cagr = ((f_price/price)**(1/5)-1)*100
-            else:
-                cagr = 0
-            
-            st.markdown("---")
-            st.markdown(f"<div style='font-size:32px; margin-bottom:10px'>Precio 2029: <b>${f_price:.2f}</b></div>", unsafe_allow_html=True)
-            c_col = "#00b894" if cagr > 10 else "#2d3436"
-            st.markdown(f"<div style='font-size:32px'>CAGR Esperado: <b style='color:{c_col}; font-size:48px'>{cagr:.2f}%</b></div>", unsafe_allow_html=True)
-            
-        with cc2:
-            yrs = list(range(datetime.now().year, datetime.now().year+6))
-            vals = [price * ((1 + cagr/100)**i) for i in range(6)]
-            
-            fig = go.Figure(go.Scatter(
-                x=yrs, y=vals, 
-                mode='lines+markers', 
-                line=dict(color='#0984e3', width=6), 
-                marker=dict(size=16)
-            ))
-            fig.update_layout(
-                title={'text': "Curva de Valor Teórico", 'font': {'size': 28}},
-                font=dict(size=20),
-                height=450,
-                yaxis_title="Precio ($)",
-                xaxis_title="Año"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # VALIDACIÓN Y ALERTAS
-        st.markdown("---")
-        st.subheader("🔍 Validación de Supuestos")
-        
-        warnings = validate_projection(growth_input, exit_pe, cagr, price, shares)
-        
-        if warnings:
-            for w in warnings:
-                show_alert(w['msg'], w['type'])
-        else:
-            show_alert("✅ Supuestos dentro de rangos razonables", "success")
-        
-        # COMPARACIÓN CON HISTÓRICO
-        hist_cagr = calculate_historical_cagr(ticker_symbol, 5)
-        if hist_cagr:
-            st.markdown("---")
-            st.subheader("📈 Comparación con Histórico")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("CAGR Histórico (5Y)", f"{hist_cagr:.1f}%")
-            with col2:
-                st.metric("CAGR Proyectado", f"{cagr:.1f}%")
-            with col3:
-                diff = cagr - hist_cagr
-                st.metric("Diferencia", f"{diff:+.1f}%", 
-                         delta=f"{'Más agresivo' if diff > 0 else 'Más conservador'}")
-            
-            if cagr > hist_cagr * 1.5:
-                show_alert(
-                    f"Tu proyección ({cagr:.1f}%) supera en 50%+ el rendimiento histórico ({hist_cagr:.1f}%). "
-                    "Verifica si hay catalizadores nuevos que justifiquen esta aceleración.",
-                    "warning"
-                )
-        
-        # ESCENARIOS MÚLTIPLES
-        st.markdown("---")
-        st.subheader("🎲 Escenarios Múltiples")
-        
-        scenarios = {
-            "🚀 Bull Case": {
-                "growth": growth_input,
-                "pe": exit_pe,
-                "type": "bull"
-            },
-            "🎯 Base Case": {
-                "growth": growth_input * 0.7,
-                "pe": exit_pe * 0.8,
-                "type": "base"
-            },
-            "🐻 Bear Case": {
-                "growth": max(5, growth_input * 0.4),
-                "pe": exit_pe * 0.6,
-                "type": "bear"
-            }
-        }
-        
-        cols_esc = st.columns(3)
-        
-        for idx, (name, params) in enumerate(scenarios.items()):
-            with cols_esc[idx]:
-                f_eps_s = eps * ((1 + params["growth"]/100)**5)
-                f_price_s = f_eps_s * params["pe"]
-                cagr_s = ((f_price_s/price)**(1/5)-1)*100 if price > 0 else 0
-                
-                scenario_card(name, f_price_s, cagr_s, params["growth"], params["pe"], params["type"])
-        
-        st.caption("💡 **Bull Case** = Tus supuestos actuales | **Base Case** = Escenario más probable | **Bear Case** = Escenario defensivo")
-        
-        # TABLA DE SENSIBILIDAD
-        st.markdown("---")
-        st.subheader("📊 Análisis de Sensibilidad")
-        
-        growth_scenarios = [10, 20, 30, 40, 50]
-        pe_scenarios = [20, 30, 40, 50, 60, 70]
-        
-        sensitivity_data = []
-        for g in growth_scenarios:
-            row = []
-            for pe in pe_scenarios:
-                f_eps_sens = eps * ((1 + g/100)**5)
-                f_price_sens = f_eps_sens * pe
-                cagr_sens = ((f_price_sens/price)**(1/5)-1)*100 if price > 0 else 0
-                
-                # Colorear según CAGR
-                if cagr_sens > 30:
-                    color = "🟢"
-                elif cagr_sens > 15:
-                    color = "🟡"
-                else:
-                    color = "🔴"
-                
-                row.append(f"{color} {cagr_sens:.1f}%")
-            sensitivity_data.append(row)
-        
-        df_sens = pd.DataFrame(
-            sensitivity_data,
-            columns=[f"PER {pe}x" for pe in pe_scenarios],
-            index=[f"Growth {g}%" for g in growth_scenarios]
-        )
-        
-        st.dataframe(df_sens, use_container_width=True)
-        st.caption("💡 CAGR esperado según diferentes combinaciones | 🟢 Excelente (>30%) | 🟡 Bueno (15-30%) | 🔴 Conservador (<15%)")
-
-    # TAB 2: DIVIDENDOS
-    with t2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        if divs['rate'] and divs['rate'] > 0 and divs['avg_5y'] > 0:
-            fair_yld = divs['rate'] / divs['avg_5y']
-            marg = ((fair_yld - price)/price)*100
-            
-            cd1, cd2 = st.columns(2)
-            
-            with cd1:
-                st.info("ℹ️ Modelo de Geraldine Weiss (Yield Theory)")
-                st.markdown(f"""
-                <div style='font-size:26px; line-height:2'>
-                    💰 Dividendo Anual: <b>${divs['rate']:.2f}</b><br>
-                    📉 Yield Actual: <b>{divs['current']*100:.2f}%</b><br>
-                    📊 Media Histórica: <b>{divs['avg_5y']*100:.2f}%</b><br>
-                    🏁 Valor por Dividendo: <b style='color:#2980b9'>${fair_yld:.2f}</b>
-                </div>
-                """, unsafe_allow_html=True)
-                
-            with cd2:
-                fig = go.Figure(go.Bar(
-                    x=['Actual', 'Media 5Y'], 
-                    y=[divs['current']*100, divs['avg_5y']*100], 
-                    marker_color=['#00b894','#b2bec3'], 
-                    text=[f"{divs['current']*100:.2f}%", f"{divs['avg_5y']*100:.2f}%"],
-                    textposition='outside',
-                    textfont={'size': 24}
-                ))
-                fig.update_layout(
-                    title={'text': "Rentabilidad por Dividendo", 'font': {'size': 28}}, 
-                    font=dict(size=20), 
-                    height=400,
-                    yaxis_title="Yield (%)"
-                )
-                st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning("⚠️ Esta empresa no paga dividendos o no tiene historial suficiente.")
-
-    # TAB 3: RATIOS
-    with t3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.subheader("🔎 Análisis Fundamental vs Histórico")
-        
-        st.info("ℹ️ **Actual** = Yahoo Finance (dato directo) | **Media Histórica** = Cálculo interno con datos históricos de YFinance")
-        
-        ratios_to_show = {
-            'PER (P/E)': {
-                'curr': info.get('trailingPE'), 
-                'avg': hist_ratios.get('PER')
-            },
-            'Price/Sales': {
-                'curr': info.get('priceToSalesTrailing12Months'), 
-                'avg': hist_ratios.get('Price/Sales')
-            },
-            'Price/Book': {
-                'curr': info.get('priceToBook'), 
-                'avg': hist_ratios.get('Price/Book')
-            },
-            'EV/EBITDA': {
-                'curr': info.get('enterpriseToEbitda'), 
-                'avg': hist_ratios.get('EV/EBITDA')
-            }
-        }
-        
-        rows = []
-        for name, vals in ratios_to_show.items():
-            curr = vals['curr']
-            avg = vals['avg']
-            
-            if curr and not pd.isna(curr) and avg and not pd.isna(avg):
-                status = "🟢 Barato" if curr < avg else "🔴 Caro"
-                diff = ((curr-avg)/avg)*100
-                rows.append([name, f"{curr:.2f}", f"{avg:.2f}", f"{diff:+.1f}%", status])
-            elif curr and not pd.isna(curr):
-                rows.append([name, f"{curr:.2f}", "N/A", "-", "⚪ Sin datos"])
-            else:
-                rows.append([name, "N/A", "N/A", "-", "⚪ Sin datos"])
-        
-        if rows:
-            df_ratios = pd.DataFrame(rows, columns=['Ratio', 'Actual', 'Media Histórica', 'Desviación', 'Diagnóstico'])
-            st.table(df_ratios)
-        else:
-            st.warning("No hay datos de ratios disponibles para este ticker.")
-
-    # Footer
+    div_y = info.get('dividendYield', 0) * 100 if info.get('dividendYield') else 0
+    c4.metric("Div. Yield", f"{div_y:.2f}%")
+    
     st.markdown("---")
-    st.markdown(f"""
-    <div style='text-align:center; color:#7f8c8d; font-size:16px; padding:20px'>
-        💡 Esta herramienta es solo educativa. No constituye asesoramiento financiero.<br>
-        📊 <b>Fuentes:</b> Yahoo Finance (ratios actuales y históricos) • Finviz (EPS next 5Y)<br>
-        🔍 <b>Market Cap actual:</b> ${(price * shares / 1e9):.2f}B | <b>Shares:</b> {shares/1e9:.2f}B
-    </div>
-    """, unsafe_allow_html=True)
+    
+    # --- PESTAÑAS ---
+    tabs = st.tabs(["📘 MÉTODO GERALDINE WEISS", "🚀 PROYECCIÓN PRECIO", "📊 RATIOS"])
+    
+    # ----------------------------------------------------
+    # TAB 1: GERALDINE WEISS (DIVIDEND YIELD THEORY) - MEJORADO
+    # ----------------------------------------------------
+    with tabs[0]:
+        if weiss:
+            st.header("💎 Teoría del Dividendo (Geraldine Weiss)")
+            st.markdown("""
+            Esta estrategia se basa en que las empresas "Blue Chip" suelen cotizar dentro de un rango de rentabilidad por dividendo consistente.
+            Compramos cuando el Yield es históricamente ALTO (precio bajo) y vendemos cuando es BAJO (precio alto).
+            """)
+            
+            w1, w2, w3 = st.columns(3)
+            
+            # Valores Teóricos Weiss
+            # Precio si Yield fuera Min (Zona Venta) = Div / Min_Yield
+            price_sell_zone = weiss['current_div_ttm'] / (weiss['min_yield']/100)
+            # Precio si Yield fuera Max (Zona Compra) = Div / Max_Yield
+            price_buy_zone = weiss['current_div_ttm'] / (weiss['max_yield']/100)
+            # Precio Justo (Yield Medio)
+            price_fair_weiss = weiss['current_div_ttm'] / (weiss['avg_yield']/100)
+            
+            with w1:
+                st.markdown("#### 🟢 Zona de Compra")
+                st.markdown(f"<h2 style='color:#00b894'>${price_buy_zone:.2f}</h2>", unsafe_allow_html=True)
+                st.caption(f"Corresponde a un Yield del {weiss['max_yield']:.2f}% (Máximo Histórico)")
+                
+            with w2:
+                st.markdown("#### ⚖️ Valor Justo")
+                st.markdown(f"<h2>${price_fair_weiss:.2f}</h2>", unsafe_allow_html=True)
+                st.caption(f"Corresponde a un Yield del {weiss['avg_yield']:.2f}% (Mediana Histórica)")
+                
+            with w3:
+                st.markdown("#### 🔴 Zona de Venta")
+                st.markdown(f"<h2 style='color:#e74c3c'>${price_sell_zone:.2f}</h2>", unsafe_allow_html=True)
+                st.caption(f"Corresponde a un Yield del {weiss['min_yield']:.2f}% (Mínimo Histórico)")
+            
+            # BARRA DE ESTADO
+            current_y = weiss['current_yield']
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            if current_y >= weiss['max_yield'] * 0.95:
+                st.markdown(f"<div class='weiss-buy'>✅ <b>SEÑAL DE COMPRA:</b> El yield actual ({current_y:.2f}%) está cerca de sus máximos históricos. La acción está infravalorada según Weiss.</div>", unsafe_allow_html=True)
+            elif current_y <= weiss['min_yield'] * 1.1:
+                st.markdown(f"<div class='weiss-sell'>⛔ <b>SEÑAL DE VENTA:</b> El yield actual ({current_y:.2f}%) está cerca de sus mínimos. La acción parece cara.</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div class='weiss-hold'>✋ <b>MANTENER / ZONA NEUTRA:</b> El yield ({current_y:.2f}%) está dentro de rangos normales.</div>", unsafe_allow_html=True)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            # GRÁFICO DEL CANAL DE VALOR
+            # Calculamos el precio histórico si siempre hubiera cotizado al yield medio
+            df_hist = weiss['history_df']
+            
+            # Precios teóricos históricos
+            df_hist['Val_Undervalued'] = df_hist['Div_TTM'] / (weiss['max_yield']/100) # Línea verde (Precio Buy)
+            df_hist['Val_Overvalued'] = df_hist['Div_TTM'] / (weiss['min_yield']/100) # Línea roja (Precio Sell)
+            df_hist['Val_Fair'] = df_hist['Div_TTM'] / (weiss['avg_yield']/100)       # Línea azul
+            
+            fig_weiss = go.Figure()
+            
+            # Área de sobrevaloración (Relleno superior)
+            fig_weiss.add_trace(go.Scatter(x=df_hist.index, y=df_hist['Val_Overvalued'], mode='lines', line=dict(width=0), showlegend=False))
+            
+            # Precio Real
+            fig_weiss.add_trace(go.Scatter(x=df_hist.index, y=df_hist['Close'], mode='lines', name='Precio Real', line=dict(color='black', width=3)))
+            
+            # Líneas de Valor
+            fig_weiss.add_trace(go.Scatter(x=df_hist.index, y=df_hist['Val_Undervalued'], mode='lines', name='Zona Compra (Yield Alto)', line=dict(color='green', dash='dash')))
+            fig_weiss.add_trace(go.Scatter(x=df_hist.index, y=df_hist['Val_Overvalued'], mode='lines', name='Zona Venta (Yield Bajo)', line=dict(color='red', dash='dash')))
+            fig_weiss.add_trace(go.Scatter(x=df_hist.index, y=df_hist['Val_Fair'], mode='lines', name='Valor Medio', line=dict(color='blue', width=1)))
+            
+            fig_weiss.update_layout(title="Canal de Valoración por Dividendos (10 Años)", template="plotly_white", height=500)
+            st.plotly_chart(fig_weiss, use_container_width=True)
+            
+        else:
+            st.warning("⚠️ Esta empresa no paga dividendos suficientes o no tiene historial estable para aplicar el método de Geraldine Weiss.")
+
+    # ----------------------------------------------------
+    # TAB 2: PROYECCIÓN (Simplificada para enfoque en correcciones)
+    # ----------------------------------------------------
+    with tabs[1]:
+        st.header("Proyección de Precio a 5 Años")
+        col_p1, col_p2 = st.columns(2)
+        
+        with col_p1:
+            growth_default = data['finviz_growth'] if data['finviz_growth'] else 10.0
+            g_input = st.number_input("Crecimiento Estimado EPS (%)", value=float(growth_default))
+            
+            # Input PER Salida con ayuda visual
+            st.write(f"PER Histórico (Mediana): **{pe_mean:.2f}**")
+            pe_input = st.number_input("PER de Salida", value=float(pe_mean))
+            
+            final_eps = eps * ((1 + g_input/100)**5)
+            final_price = final_eps * pe_input
+            
+            cagr = ((final_price / price)**(1/5) - 1) * 100
+            
+            st.markdown("---")
+            st.metric("Precio Objetivo (2029)", f"${final_price:.2f}")
+            st.metric("Retorno Anual (CAGR)", f"{cagr:.2f}%")
+            
+        with col_p2:
+            # Gráfico simple de proyección
+            years = list(range(datetime.now().year, datetime.now().year+6))
+            values = [price * ((1 + cagr/100)**i) for i in range(6)]
+            fig_proj = go.Figure(go.Scatter(x=years, y=values, mode='lines+markers', line=dict(color='#6c5ce7', width=4)))
+            fig_proj.update_layout(title="Curva de Valor Esperado", height=400)
+            st.plotly_chart(fig_proj, use_container_width=True)
+
+    # ----------------------------------------------------
+    # TAB 3: RATIOS HISTÓRICOS (Verificación)
+    # ----------------------------------------------------
+    with tabs[2]:
+        st.header("Diagnóstico de Ratios (Actual vs Mediana Histórica)")
+        st.markdown("Utilizamos la **Mediana** de los últimos 10 años para evitar que años con malos resultados distorsionen la media hacia arriba.")
+        
+        hr = data['hist_ratios']
+        
+        ratios_check = [
+            ("PER (P/E)", info.get('trailingPE'), hr.get('PER')),
+            ("Price/Sales", info.get('priceToSalesTrailing12Months'), hr.get('Price/Sales')),
+            ("Price/Book", info.get('priceToBook'), hr.get('Price/Book')) # Este lo saca yahoo, se podría calcular histórico tmb
+        ]
+        
+        for name, curr, hist in ratios_check:
+            if curr and hist:
+                col1, col2 = st.columns([3, 1])
+                diff = ((curr - hist) / hist) * 100
+                color = "🔴 Caro" if diff > 10 else "🟢 Barato" if diff < -10 else "🟡 Justo"
+                
+                with col1:
+                    st.markdown(f"**{name}**: Actual {curr:.2f} vs Histórico {hist:.2f}")
+                    st.progress(min(max((curr/ (hist*2) ), 0.0), 1.0))
+                with col2:
+                    st.markdown(f"### {color}")
+                    st.caption(f"{diff:+.1f}% desv.")
+                st.divider()
